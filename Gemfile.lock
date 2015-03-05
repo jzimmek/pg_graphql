@@ -1,0 +1,35 @@
+PATH
+  remote: .
+  specs:
+    pggraphql (0.0.1)
+      activesupport
+      json
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+    activesupport (4.2.0)
+      i18n (~> 0.7)
+      json (~> 1.7, >= 1.7.7)
+      minitest (~> 5.1)
+      thread_safe (~> 0.3, >= 0.3.4)
+      tzinfo (~> 1.1)
+    i18n (0.7.0)
+    json (1.8.2)
+    minitest (5.5.1)
+    power_assert (0.2.2)
+    rake (10.4.2)
+    test-unit (3.0.8)
+      power_assert
+    thread_safe (0.3.4)
+    tzinfo (1.2.2)
+      thread_safe (~> 0.1)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  bundler (~> 1.7)
+  pggraphql!
+  rake (~> 10.0)
+  test-unit
