@@ -34,12 +34,7 @@ module PgGraphQl
       @types[name] = opts
     end
 
-    def query(query, level=0, parent_link=nil, parent_type=nil)
-      requested_type = @types[query[0][0].to_sym]
-      requested_ids = query[0][1].is_a?(Array) ? query[0][1] : [query[0][1]].reject{|e| !e}
-
-      sql = requested_type.sql
-
+    def parent_link_where_conditions(requested_type, requested_ids, parent_link, parent_type)
       where_conditions = []
 
       if parent_link
@@ -53,6 +48,33 @@ module PgGraphQl
 
         where_conditions << parent_link[:filter] if parent_link[:filter]
       end
+
+      where_conditions << " #{requested_type.pk} in (#{requested_ids.map(&:to_s).join(',')})" unless requested_ids.empty?
+      where_conditions << (" " + requested_type.filter) if requested_type.filter
+
+      where_conditions
+    end
+
+    def wrapped_query(requested_columns, requested_type, parent_link, parent_type, where_conditions)
+      is_many = parent_type && parent_type.links[parent_link[:name]][0] == :many
+
+      inner_sql = requested_type.sql.gsub("*", requested_columns.join(", "))
+
+      unless where_conditions.empty?
+        inner_sql += " where"
+        inner_sql += where_conditions.join(" and ")
+      end
+
+      inner_sql += (is_many ? "" : " limit 1")
+
+      "select to_json(" + (is_many ? "coalesce(json_agg(x.*), '[]'::json)" : "x.*" ) + ") res from (#{inner_sql}) x"
+    end
+
+    def query(query, level=0, parent_link=nil, parent_type=nil)
+      requested_type = @types[query[0][0].to_sym]
+      requested_ids = query[0][1].is_a?(Array) ? query[0][1] : [query[0][1]].reject{|e| !e}
+
+      where_conditions = parent_link_where_conditions(requested_type, requested_ids, parent_link, parent_type)
 
       requested_columns = query[1..-1].map do |field|
 
@@ -77,23 +99,8 @@ module PgGraphQl
 
       end
 
-      is_many = parent_type && parent_type.links[parent_link[:name]][0] == :many
-
-      inner_sql = sql.gsub("*", requested_columns.join(", "))
-
-      where_conditions << " #{requested_type.pk} in (#{requested_ids.map(&:to_s).join(',')})" unless requested_ids.empty?
-      where_conditions << (" " + requested_type.filter) if requested_type.filter
-
-      unless where_conditions.empty?
-        inner_sql += " where"
-        inner_sql += where_conditions.join(" and ")
-      end
-
-      inner_sql += (is_many ? "" : " limit 1")
-
-      "select to_json(" + (is_many ? "coalesce(json_agg(x.*), '[]'::json)" : "x.*" ) + ") res from (#{inner_sql}) x"
+      wrapped_query(requested_columns, requested_type, parent_link, parent_type, where_conditions)
     end
-
   end
 
   class Type
