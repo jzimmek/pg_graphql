@@ -1,133 +1,146 @@
-require "json"
 require "active_support/all"
 require "pggraphql/version"
 
 module PgGraphQl
 
   class Schema
-    attr_accessor :roots
-
+    attr_reader :types, :roots
     def initialize
-      @roots = {}
       @types = {}
+      @roots = []
       yield(self) if block_given?
 
-      @types = @types.inject({}) do |memo, e|
-        t = memo[e[0]] = Type.new(e[0])
-
-        e[1].each_pair do |key, val|
-          t.send("#{key}=", val) unless key == :block
-        end
-
-        e[1][:block].call(t) if e[1][:block]
-        memo
-      end
+      @roots = @roots.map{|r| @types[r]}
     end
 
-    def root(name, opts={})
-      opts[:type] = name.to_s.singularize.to_sym unless opts[:type]
-      @roots[name] = opts
+    def root(name)
+      @roots << name
     end
 
-    def type(name, opts={}, &block)
-      opts[:block] = block
-      @types[name] = opts
+    def type(name, opts={})
+      type = @types[name] = Type.new(self, name)
+      opts.each_pair{|key, val| type.send(:"#{key}=", val) }
+      yield(type) if block_given?
     end
 
-    def parent_link_where_conditions(requested_type, requested_ids, parent_link, parent_type)
-      where_conditions = []
+    def to_sql(query, level=0, parent=nil, link_name=nil)
+      if level > 0
+        query.map do |e|
+          link = parent ? parent.links[link_name] : nil
+          type = link ? link.type : self.types[e[0].to_s.singularize.to_sym]
+          ids = e[1][:id]
 
-      if parent_link
-        if parent_link[:fk].is_a?(Symbol)        
-          where_conditions << (parent_link[:invert] ? " #{requested_type.pk} = #{parent_type.as}.#{parent_link[:fk]}" : " #{parent_link[:fk]} = #{parent_type.pk!}")
-        elsif parent_link[:fk].is_a?(Proc)
-          where_conditions << (" #{requested_type.pk} in (" + parent_link[:fk].call(parent_link) + ")")
-        else
-          raise "unsupported"
-        end
+          columns = e[1].map do |f|
+            column_name = f[0]
 
-        where_conditions << parent_link[:filter] if parent_link[:filter]
-      end
+            raise "unknown field #{column_name.inspect} on type #{type.name.inspect}" if !f[1].is_a?(Hash) && !type.fields.include?(column_name)
+            raise "unknown link #{column_name.inspect} on type #{type.name.inspect}" if f[1].is_a?(Hash) && !type.links.include?(column_name)
 
-      where_conditions << " #{requested_type.pk} in (#{requested_ids.map(&:to_s).join(',')})" unless requested_ids.empty?
-      where_conditions << (" " + requested_type.filter) if requested_type.filter
+            (f[1].is_a?(Hash) ? "(" + to_sql([f].to_h, level + 1, type, column_name) + ") as #{column_name}" : column_name.to_s)
+          end.join(",")
 
-      where_conditions
-    end
+          is_many = (link && link.many?) || !ids || ids.is_a?(Array)
+          order_by = link.try(:order_by) || type.try(:order_by)
 
-    def wrapped_query(requested_columns, requested_type, parent_link, parent_type, where_conditions)
-      is_many = parent_type && parent_type.links[parent_link[:name]][0] == :many
+          wheres = []
 
-      inner_sql = requested_type.sql.gsub("*", requested_columns.join(", "))
-
-      unless where_conditions.empty?
-        inner_sql += " where"
-        inner_sql += where_conditions.join(" and ")
-      end
-
-      inner_sql += (is_many ? "" : " limit 1")
-
-      "select to_json(" + (is_many ? "coalesce(json_agg(x.*), '[]'::json)" : "x.*" ) + ") res from (#{inner_sql}) x"
-    end
-
-    def query(query, level=0, parent_link=nil, parent_type=nil)
-      requested_type = @types[query[0][0].to_sym]
-      requested_ids = query[0][1].is_a?(Array) ? query[0][1] : [query[0][1]].reject{|e| !e}
-
-      where_conditions = parent_link_where_conditions(requested_type, requested_ids, parent_link, parent_type)
-
-      requested_columns = query[1..-1].map do |field|
-
-        if field.is_a?(Symbol)
-          raise "unknown field" unless requested_type.fields.include?(field)
-          field.to_s
-        elsif field.is_a?(Array)
-
-          requested_link_field = field[0][0]
-          requested_link = requested_type.links[requested_link_field][1]
-          requested_link_ids = field[0][1]
-          requested_link_type = @types[requested_link[:type]]
-
-          requested_link_query = field.each_with_index.map do |e2, idx|
-            idx == 0 ? [requested_link_type.name, requested_link_ids] : e2
+          if ids && ids.to_s != "id"
+            if ids.is_a?(Array)
+              wheres << "id in (#{ids.join(',')})" unless ids.empty?
+            else
+              wheres << "id = #{ids}"
+            end
           end
 
-          "(" + self.query(requested_link_query, level + 1, requested_link, requested_type) + ") as #{requested_link_field}"
-        else
-          raise "unsupported"
-        end
+          wheres << ("(" + type.filter + ")") if type.filter
 
+          if link
+            wheres << if link.invert
+              "id = #{parent.table}.#{link.fk}"
+            else
+              "#{link.fk} = #{parent.table}.id"
+            end
+
+            wheres << ("(" + link.filter + ")") if link.filter
+          end
+
+          sql = "select to_json("
+          sql += "coalesce(json_agg(" if is_many
+          sql += "x.*"
+          sql += "), '[]'::json)" if is_many
+          sql += ") from (select #{columns} from #{type.table}"
+          sql += " where #{wheres.join(' and ')}" unless wheres.empty?
+          sql += " order by #{order_by}" if order_by
+          sql += " limit 1" if !is_many
+          sql += ") x"
+
+        end.join
+      else
+        wrap_root(query.map do |e|
+          sql = to_sql([e].to_h, 1)
+          "select '#{e[0]}'::text as key, (#{sql}) as value"
+        end.join("\nunion all\n"))
       end
-
-      wrapped_query(requested_columns, requested_type, parent_link, parent_type, where_conditions)
     end
+
+    def wrap_root(sql)
+      "select ('{'||string_agg(to_json(t1.key)||':'||coalesce(to_json(t1.value), 'null'), ',')||'}')::json res from (\n" + sql + ") t1"
+    end
+
+    class Type
+      attr_accessor :name, :table, :filter, :links, :order_by, :fields
+      attr_reader :schema
+      def initialize(schema, name)
+        @schema = schema
+        @name = name
+        @table = name.to_s.pluralize.to_sym
+        @fields = [:id]
+        @filter = nil
+        @order_by = nil
+        @links = {}
+      end
+      def one(name, opts={})
+        create_link(name, false, opts)
+      end
+      def many(name, opts={})
+        create_link(name, true, opts)
+      end
+      def create_link(name, many, opts)
+        link = @links[name] = Link.new(self, name, many)
+        opts.each_pair do |key, val| 
+          link.send(:"#{key}=", val)
+        end
+        link
+      end
+    end
+
+    class Link
+      attr_accessor :name, :invert, :filter, :order_by
+      def initialize(owner, name, many)
+        @owner = owner
+        @name = name
+        @many = many
+        @invert = false
+        @order_by = nil
+      end
+      def fk=(_fk)
+        @_fk = fk
+      end
+      def fk
+        @invert ? "#{@name.to_s.singularize}_id" : "#{@owner.name}_id"
+      end
+      def type=(_type)
+        @_type = _type
+      end
+      def type
+        @owner.schema.types[@_type||@name.to_s.singularize.to_sym]
+      end
+      def many?
+        !!@many
+      end
+    end
+
   end
 
-  class Type
-    attr_accessor :pk, :sql, :fields, :as, :filter
-    attr_reader :links, :name
-    def initialize(name)
-      @name = name
-      @links = {}
-      @fields = [:id]
-      @as = name.to_s.pluralize.to_sym
-      @sql = "select * from #{name.to_s.pluralize}"
-      @pk = :id
-    end
-    def pk!
-      :"#{@as}.#{@pk}"
-    end
-    def one(name, opts={})
-      opts[:fk] = :"#{@name}_id" unless opts[:fk]
-      opts[:type] = name.to_s.singularize.to_sym unless opts[:type]
-      opts[:name] = name
-      @links[name] = [:one, opts]
-    end
-    def many(name, opts={})
-      opts[:fk] = :"#{@name}_id" unless opts[:fk]
-      opts[:type] = name.to_s.singularize.to_sym unless opts[:type]
-      opts[:name] = name
-      @links[name] = [:many, opts]
-    end
-  end
+
 end
