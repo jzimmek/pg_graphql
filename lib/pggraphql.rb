@@ -30,6 +30,8 @@ module PgGraphQl
           type = link ? link.type : self.types[e[0].to_s.singularize.to_sym]
           ids = e[1][:id]
 
+          raise "missing :fk on link #{link.name.inspect}" if link && !link.fk
+
           columns = e[1].map do |f|
             column_name = f[0]
 
@@ -55,12 +57,7 @@ module PgGraphQl
           wheres << ("(" + type.filter + ")") if type.filter
 
           if link
-            wheres << if link.invert
-              "id = #{parent.table}.#{link.fk}"
-            else
-              "#{link.fk} = #{parent.table}.id"
-            end
-
+            wheres << ("(" + link.fk + ")")
             wheres << ("(" + link.filter + ")") if link.filter
           end
 
@@ -115,19 +112,12 @@ module PgGraphQl
     end
 
     class Link
-      attr_accessor :name, :invert, :filter, :order_by
+      attr_accessor :name, :filter, :fk, :order_by
       def initialize(owner, name, many)
         @owner = owner
         @name = name
         @many = many
-        @invert = false
         @order_by = nil
-      end
-      def fk=(_fk)
-        @_fk = fk
-      end
-      def fk
-        @invert ? "#{@name.to_s.singularize}_id" : "#{@owner.name}_id"
       end
       def type=(_type)
         @_type = _type
