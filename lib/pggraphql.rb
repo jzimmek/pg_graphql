@@ -54,11 +54,7 @@ module PgGraphQl
           wheres = []
 
           if ids && ids.to_s != "id"
-            if ids.is_a?(Array)
-              wheres << "id in (#{ids.join(',')})" unless ids.empty?
-            else
-              wheres << "id = #{ids}"
-            end
+            wheres << type.pk.call(ids) if type.pk.call(ids)
           end
 
           wheres << ("(" + type.filter + ")") if type.filter
@@ -102,7 +98,7 @@ module PgGraphQl
     end
 
     class Type
-      attr_accessor :name, :table, :filter, :links, :order_by, :fields, :subtypes
+      attr_accessor :name, :table, :filter, :links, :order_by, :fields, :subtypes, :pk
       attr_reader :schema, :mappings
       def initialize(schema, name)
         @schema = schema
@@ -114,6 +110,17 @@ module PgGraphQl
         @links = {}
         @subtypes = {}
         @mappings = {}
+        @pk = ->(ids) do
+          if ids.is_a?(Array)
+            if ids.empty?
+              nil
+            else
+              "id in (#{ids.join(',')})"
+            end
+          else
+            "id = #{ids}"
+          end
+        end
       end
       def map(field, column_expr)
         @mappings[field] = column_expr

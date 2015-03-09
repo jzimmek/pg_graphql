@@ -53,6 +53,22 @@ module PgGraphQl
       ), token(res)
     end
 
+    def test_simple_pk_custom
+      res = to_sql({user: {id: "1", email: "email"}}) do |s|
+        s.root :user
+        s.type :user, fields: [:id, :email], pk: ->(id){ "access_token = '#{id}'" }
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(x.*)
+            from (select id,
+                  email
+                from users where access_token = '1' limit 1) x) as value
+      SQL
+      ), token(res)
+    end
+
     def test_simple_pk_array_one
       res = to_sql({user: {id: [1], email: "email"}}) do |s|
         s.root :user
