@@ -37,10 +37,34 @@ module PgGraphQl
       ), token(res)
     end
 
+    def test_simple_fail_when_accessing_non_root
+      assert_raise_message ":user is not a root type" do
+        res = to_sql({user: {id: 1, email: "email"}}) do |s|
+          s.type :user, fields: [:id, :email]
+        end
+      end
+    end
+
+    def test_simple_fail_without_pk
+      assert_raise_message "missing id for root type :user" do
+        res = to_sql({user: {email: "email"}}) do |s|
+          s.root :user
+          s.type :user, fields: [:id, :email]
+        end
+      end
+
+      assert_raise_message "missing id for root type :user" do
+        res = to_sql({user: {id: [], email: "email"}}) do |s|
+          s.root :user
+          s.type :user, fields: [:id, :email]
+        end
+      end
+    end
+
     def test_simple_pk_array_empty
       res = to_sql({user: {id: [], email: "email"}}) do |s|
         s.root :user
-        s.type :user, fields: [:id, :email]
+        s.type :user, null_pk: true, fields: [:id, :email]
       end
 
       assert_equal token(<<-SQL
@@ -65,6 +89,37 @@ module PgGraphQl
             from (select id,
                   email
                 from users where access_token = '1' limit 1) x) as value
+      SQL
+      ), token(res)
+    end
+
+    def test_simple_pk_type_handling
+      res = to_sql({user: {id: ["1"], email: "email"}}) do |s|
+        s.root :user
+        s.type :user, fields: [:id, :email]
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(coalesce(json_agg(x.*), '[]'::json))
+            from (select id,
+                  email
+                from users where id in ('1')) x) as value      
+      SQL
+      ), token(res)
+
+
+      res = to_sql({user: {id: "1", email: "email"}}) do |s|
+        s.root :user
+        s.type :user, fields: [:id, :email]
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(x.*)
+            from (select id,
+                  email
+                from users where id = '1' limit 1) x) as value      
       SQL
       ), token(res)
     end
@@ -121,8 +176,9 @@ module PgGraphQl
     def test_simple_multiple
       res = to_sql({user: {id: 1, email: "email"}, educator: {id: "id"}}) do |s|
         s.root :user
+        s.root :educator
         s.type :user, fields: [:id, :email]
-        s.type :educator
+        s.type :educator, null_pk: true
       end
 
       assert_equal token(<<-SQL
@@ -168,7 +224,7 @@ module PgGraphQl
 
         s.type :order
 
-        s.type :product, fields: [:id, :type, :clickout__destination_url, :download__download_url] do |t|
+        s.type :product, null_pk: true, fields: [:id, :type, :clickout__destination_url, :download__download_url] do |t|
 
           t.map :id, "products.id"
 

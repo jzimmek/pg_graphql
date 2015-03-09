@@ -30,7 +30,7 @@ module PgGraphQl
           type = link ? link.type : self.types[e[0].to_s.singularize.to_sym]
           ids = e[1][:id]
 
-          # puts "#{e[0].inspect}, #{link_name.inspect} ... type: #{type.inspect}"
+          raise "#{type.name.inspect} is not a root type" if level == 1 && !@roots.include?(type)
 
           raise "missing :fk on link #{link.name.inspect}" if link && !link.fk
 
@@ -53,9 +53,11 @@ module PgGraphQl
 
           wheres = []
 
-          if ids && ids.to_s != "id"
+          raise "missing id for root type #{type.name.inspect}" if ((ids.is_a?(Array) && ids.empty?) || "#{ids}".empty?) && level == 1 && !type.null_pk
+
+          # if ids && ids.to_s != "id"
             wheres << type.pk.call(ids) if type.pk.call(ids)
-          end
+          # end
 
           wheres << ("(" + type.filter + ")") if type.filter
 
@@ -86,7 +88,7 @@ module PgGraphQl
 
         end.join
       else
-        wrap_root(query.map do |e|
+        wrap_root(query.map do |e|          
           sql = to_sql([e].to_h, 1)
           "select '#{e[0]}'::text as key, (#{sql}) as value"
         end.join("\nunion all\n"))
@@ -98,7 +100,7 @@ module PgGraphQl
     end
 
     class Type
-      attr_accessor :name, :table, :filter, :links, :order_by, :fields, :subtypes, :pk
+      attr_accessor :name, :table, :filter, :links, :order_by, :fields, :subtypes, :pk, :null_pk
       attr_reader :schema, :mappings
       def initialize(schema, name)
         @schema = schema
@@ -110,15 +112,20 @@ module PgGraphQl
         @links = {}
         @subtypes = {}
         @mappings = {}
+        @null_pk = false
         @pk = ->(ids) do
           if ids.is_a?(Array)
             if ids.empty?
               nil
             else
-              "id in (#{ids.join(',')})"
+              "id in (" + ids.map{|id| id.is_a?(String) ? "'#{id}'" : id.to_s}.join(',') + ")"
             end
           else
-            "id = #{ids}"
+            if "#{ids.to_s}".empty? || ids.to_s == "id"
+              nil
+            else
+              "id = " + (ids.is_a?(String) ? "'#{ids}'" : "#{ids}")
+            end
           end
         end
       end
