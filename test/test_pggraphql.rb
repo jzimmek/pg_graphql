@@ -125,9 +125,74 @@ module PgGraphQl
       ), token(res)
     end
 
-    # #####################
-    # # one
-    # #####################
+    #####################
+    # inherit
+    #####################
+
+    def test_inherit
+      res = to_sql({
+        products: {
+          id: [], 
+          type: nil,
+          clickout__destination_url: nil,
+          download__download_url: nil,
+          download__users: {
+            id: "id",
+            orders: {
+              id: "id"
+            }
+          }
+        }
+      }) do |s|
+        s.root :product
+
+        s.type :user, fields: [:id, :email] do |t|
+          t.many :orders, fk: "user_id = users.id"
+        end
+
+        s.type :order
+
+        s.type :product, fields: [:id, :type, :clickout__destination_url, :download__download_url] do |t|
+
+          t.map :id, "products.id"
+
+          t.subtype :download, table: :product_downloads, fk: "download.id = products.id and products.type = 'download'"
+          t.subtype :clickout, table: :product_clickouts, fk: "clickout.id = products.id and products.type = 'clickout'"
+
+          t.many :download__users, type: :user, fk: "id = download.id"
+        end
+
+      end
+
+      assert_equal token(<<-SQL
+        select 'products'::text as key,
+          (select to_json(coalesce(json_agg(x.*), '[]'::json))
+            from (select products.id as id,
+                  type,
+                  clickout.destination_url as clickout__destination_url,
+                  download.download_url as download__download_url,
+                  (select to_json(coalesce(json_agg(x.*), '[]'::json))
+                    from (select id,
+                          (select to_json(coalesce(json_agg(x.*), '[]'::json))
+                            from (select id
+                                from orders
+                                where (user_id = users.id)) x) as orders
+                        from users
+                        where (id = download.id)) x) as download__users
+                from products
+                left join product_downloads as download on (download.id = products.id
+                    and products.type = 'download')
+                left join product_clickouts as clickout on (clickout.id = products.id
+                    and products.type = 'clickout')) x) as value
+      SQL
+      ), token(res)
+      
+    end
+
+
+    #####################
+    # one
+    #####################
 
 
     def test_link_one

@@ -30,15 +30,22 @@ module PgGraphQl
           type = link ? link.type : self.types[e[0].to_s.singularize.to_sym]
           ids = e[1][:id]
 
+          # puts "#{e[0].inspect}, #{link_name.inspect} ... type: #{type.inspect}"
+
           raise "missing :fk on link #{link.name.inspect}" if link && !link.fk
 
           columns = e[1].map do |f|
-            column_name = f[0]
+            nested_link_name = f[0]
+            field_name = f[0]
 
-            raise "unknown field #{column_name.inspect} on type #{type.name.inspect}" if !f[1].is_a?(Hash) && !type.fields.include?(column_name)
-            raise "unknown link #{column_name.inspect} on type #{type.name.inspect}" if f[1].is_a?(Hash) && !type.links.include?(column_name)
+            raise "unknown field #{field_name.inspect} on type #{type.name.inspect}" if !f[1].is_a?(Hash) && !type.fields.include?(field_name)
+            raise "unknown link #{field_name.inspect} on type #{type.name.inspect}" if f[1].is_a?(Hash) && !type.links.include?(field_name)
 
-            (f[1].is_a?(Hash) ? "(" + to_sql([f].to_h, level + 1, type, column_name) + ") as #{column_name}" : column_name.to_s)
+            column_name = field_name.to_s.index("__") ? field_name.to_s.gsub(/__/, ".").to_sym : field_name
+
+            column_expr = type.mappings[field_name] || column_name
+
+            (f[1].is_a?(Hash) ? "(" + to_sql([f].to_h, level + 1, type, nested_link_name) + ") as #{field_name}" : ((column_name == field_name && column_name == column_expr) ? column_name.to_s : "#{column_expr} as #{field_name}"))
           end.join(",")
 
           is_many = (link && link.many?) || !ids || ids.is_a?(Array)
@@ -66,6 +73,16 @@ module PgGraphQl
           sql += "x.*"
           sql += "), '[]'::json)" if is_many
           sql += ") from (select #{columns} from #{type.table}"
+
+        
+          unless type.subtypes.empty?
+            sql += "\n" + type.subtypes.map do |f|
+              subtype = f[1]
+              "left join #{subtype.table} as #{subtype.name} on (#{subtype.fk})"
+            end.join("\n")
+          end
+
+
           sql += " where #{wheres.join(' and ')}" unless wheres.empty?
           sql += " order by #{order_by}" if order_by
           sql += " limit 1" if !is_many
@@ -85,8 +102,8 @@ module PgGraphQl
     end
 
     class Type
-      attr_accessor :name, :table, :filter, :links, :order_by, :fields
-      attr_reader :schema
+      attr_accessor :name, :table, :filter, :links, :order_by, :fields, :subtypes
+      attr_reader :schema, :mappings
       def initialize(schema, name)
         @schema = schema
         @name = name
@@ -95,6 +112,11 @@ module PgGraphQl
         @filter = nil
         @order_by = nil
         @links = {}
+        @subtypes = {}
+        @mappings = {}
+      end
+      def map(field, column_expr)
+        @mappings[field] = column_expr
       end
       def one(name, opts={})
         create_link(name, false, opts)
@@ -102,12 +124,29 @@ module PgGraphQl
       def many(name, opts={})
         create_link(name, true, opts)
       end
+      def subtype(name, opts={})
+        subtype = @subtypes[name] = SubType.new(self, name)
+        opts.each_pair do |key, val| 
+          subtype.send(:"#{key}=", val)
+        end
+        subtype
+      end
       def create_link(name, many, opts)
         link = @links[name] = Link.new(self, name, many)
         opts.each_pair do |key, val| 
           link.send(:"#{key}=", val)
         end
         link
+      end
+    end
+
+    class SubType
+      attr_accessor :name, :table, :fk
+      def initialize(type, name)
+        @type = type
+        @name = name
+        @table = nil
+        @fk = nil
       end
     end
 
