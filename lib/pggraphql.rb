@@ -30,11 +30,14 @@ module PgGraphQl
           type = link ? link.type : self.types[e[0].to_s.singularize.to_sym]
           ids = e[1][:id]
 
-          raise "#{type.name.inspect} is not a root type" if level == 1 && !@roots.include?(type)
+          raise "found :id with without value on type #{type.name.inspect}" if e[1].key?(:id) && ids.nil?
+          raise "found empty :id array on type #{type.name.inspect}" if e[1].key?(:id) && ids.is_a?(Array) && ids.empty?
 
+
+          raise "#{type.name.inspect} is not a root type" if level == 1 && !@roots.include?(type)
           raise "missing :fk on link #{link.name.inspect}" if link && !link.fk
 
-          columns = e[1].map do |f|
+          columns = {id: nil}.merge(e[1]).map do |f|
             nested_link_name = f[0]
             field_name = f[0]
 
@@ -48,16 +51,15 @@ module PgGraphQl
             (f[1].is_a?(Hash) ? "(" + to_sql([f].to_h, level + 1, type, nested_link_name) + ") as #{field_name}" : ((column_name == field_name && column_name == column_expr) ? column_name.to_s : "#{column_expr} as #{field_name}"))
           end.join(",")
 
-          is_many = (link && link.many?) || !ids || ids.is_a?(Array)
+          # is_many = (link && link.many?) || ids.is_a?(Array) || (level == 1 && !ids && type.null_pk == :array)
+          is_many = (link && link.many?) || (level == 1 && ids.is_a?(Array)) || (level == 1 && !ids && type.null_pk == :array)
           order_by = link.try(:order_by) || type.try(:order_by)
 
           wheres = []
 
-          raise "missing id for root type #{type.name.inspect}" if ((ids.is_a?(Array) && ids.empty?) || "#{ids}".empty?) && level == 1 && !type.null_pk
+          raise "missing :id for root type #{type.name.inspect}" if !ids && level == 1 && !type.null_pk
 
-          # if ids && ids.to_s != "id"
-            wheres << type.pk.call(ids) if type.pk.call(ids)
-          # end
+          wheres << type.pk.call(ids) if ids && type.pk.call(ids)
 
           wheres << ("(" + type.filter + ")") if type.filter
 
@@ -100,8 +102,8 @@ module PgGraphQl
     end
 
     class Type
-      attr_accessor :name, :table, :filter, :links, :order_by, :fields, :subtypes, :pk, :null_pk
-      attr_reader :schema, :mappings
+      attr_accessor :name, :table, :links, :order_by, :filter, :subtypes, :pk, :null_pk
+      attr_reader :schema, :mappings, :fields
       def initialize(schema, name)
         @schema = schema
         @name = name
@@ -115,19 +117,14 @@ module PgGraphQl
         @null_pk = false
         @pk = ->(ids) do
           if ids.is_a?(Array)
-            if ids.empty?
-              nil
-            else
-              "id in (" + ids.map{|id| id.is_a?(String) ? "'#{id}'" : id.to_s}.join(',') + ")"
-            end
+            "id in (" + ids.map{|id| id.is_a?(String) ? "'#{id}'" : id.to_s}.join(',') + ")"
           else
-            if "#{ids.to_s}".empty? || ids.to_s == "id"
-              nil
-            else
-              "id = " + (ids.is_a?(String) ? "'#{ids}'" : "#{ids}")
-            end
+            "id = " + (ids.is_a?(String) ? "'#{ids}'" : "#{ids}")
           end
         end
+      end
+      def fields=(fields)
+        @fields = (fields + [:id]).uniq
       end
       def map(field, column_expr)
         @mappings[field] = column_expr
