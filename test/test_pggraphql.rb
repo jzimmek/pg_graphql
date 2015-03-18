@@ -290,6 +290,32 @@ module PgGraphQl
       
     end
 
+    def test_inherit_with_pk
+      res = to_sql({
+        products: {
+          id: 1,
+          clickout__destination_url: nil
+        }
+      }) do |s|
+        s.root :product
+        s.type :product, null_pk: :array, fields: [:type, :clickout__destination_url, :download__download_url] do |t|
+          t.map :id, "products.id"
+          t.subtype :clickout, table: :product_clickouts, fk: "clickout.id = products.id and products.type = 'clickout'"
+        end
+      end
+
+      assert_equal token(<<-SQL
+        select 'products'::text as key,
+          (select to_json(x.*)
+            from (select products.id as id,
+                  clickout.destination_url as clickout__destination_url
+                from products
+                left join product_clickouts as clickout on (clickout.id = products.id
+                    and products.type = 'clickout') where products.id = 1 limit 1) x) as value
+      SQL
+      ), token(res)
+      
+    end
 
     #####################
     # one

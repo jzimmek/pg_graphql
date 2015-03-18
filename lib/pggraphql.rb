@@ -116,10 +116,11 @@ module PgGraphQl
         @mappings = {}
         @null_pk = false
         @pk = ->(ids) do
+          id_column = @mappings[:id] || "id"
           if ids.is_a?(Array)
-            "id in (" + ids.map{|id| id.is_a?(String) ? "'#{id}'" : id.to_s}.join(',') + ")"
+            "#{id_column} in (" + ids.map{|id| id.is_a?(String) ? "'#{id}'" : id.to_s}.join(',') + ")"
           else
-            "id = " + (ids.is_a?(String) ? "'#{ids}'" : "#{ids}")
+            "#{id_column} = " + (ids.is_a?(String) ? "'#{ids}'" : "#{ids}")
           end
         end
       end
