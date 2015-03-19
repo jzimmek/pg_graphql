@@ -59,7 +59,7 @@ module PgGraphQl
 
           raise "missing :id for root type #{type.name.inspect}" if !ids && level == 1 && !type.null_pk
 
-          wheres << type.pk.call(ids) if ids && type.pk.call(ids)
+          wheres << type.pk.call(ids, level) if ids && type.pk.call(ids, level)
 
           wheres << ("(" + type.filter + ")") if type.filter
 
@@ -115,7 +115,7 @@ module PgGraphQl
         @subtypes = {}
         @mappings = {}
         @null_pk = false
-        @pk = ->(ids) do
+        @pk = ->(ids, level) do
           id_column = @mappings[:id] || "id"
           if ids.is_a?(Array)
             "#{id_column} in (" + ids.map{|id| id.is_a?(String) ? "'#{id}'" : id.to_s}.join(',') + ")"

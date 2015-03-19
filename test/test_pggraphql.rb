@@ -97,7 +97,7 @@ module PgGraphQl
     def test_simple_pk_custom
       res = to_sql({user: {id: "1", email: "email"}}) do |s|
         s.root :user
-        s.type :user, fields: [:email], pk: ->(id){ "access_token = '#{id}'" }
+        s.type :user, fields: [:email], pk: ->(id, level){ "access_token = '#{id}'" }
       end
 
       assert_equal token(<<-SQL
@@ -106,6 +106,22 @@ module PgGraphQl
             from (select id,
                   email
                 from users where access_token = '1' limit 1) x) as value
+      SQL
+      ), token(res)
+    end
+
+    def test_simple_pk_with_level
+      res = to_sql({user: {id: "99", email: "email"}}) do |s|
+        s.root :user
+        s.type :user, fields: [:email], pk: ->(id, level){ "level#{level} = '#{id}'" }
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(x.*)
+            from (select id,
+                  email
+                from users where level1 = '99' limit 1) x) as value
       SQL
       ), token(res)
     end
