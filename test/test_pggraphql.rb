@@ -323,7 +323,7 @@ module PgGraphQl
       assert_equal token(<<-SQL
         select 'products'::text as key,
           (select to_json(x.*)
-            from (select products.id as id,
+            from (select products.id as id, type,
                   clickout.destination_url as clickout__destination_url
                 from products
                 left join product_clickouts as clickout on (clickout.id = products.id

@@ -37,7 +37,11 @@ module PgGraphQl
           raise "#{type.name.inspect} is not a root type" if level == 1 && !@roots.include?(type)
           raise "missing :fk on link #{link.name.inspect}" if link && !link.fk
 
-          columns = {id: nil}.merge(e[1]).map do |f|
+          requested_fields = {id: nil} # always add :id field
+          requested_fields = requested_fields.merge(type: nil) unless type.subtypes.empty? # always add :subtype
+          requested_fields = requested_fields.merge(e[1])
+
+          columns = requested_fields.map do |f|
             nested_link_name = f[0]
             field_name = f[0]
 
