@@ -314,7 +314,7 @@ module PgGraphQl
         }
       }) do |s|
         s.root :product
-        s.type :product, null_pk: :array, fields: [:type, :clickout__destination_url, :download__download_url] do |t|
+        s.type :product, null_pk: :array, fields: [:clickout__destination_url, :download__download_url] do |t|
           t.map :id, "products.id"
           t.subtype :clickout, table: :product_clickouts, fk: "clickout.id = products.id and products.type = 'clickout'"
         end

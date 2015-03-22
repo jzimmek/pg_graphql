@@ -112,7 +112,7 @@ module PgGraphQl
         @schema = schema
         @name = name
         @table = name.to_s.pluralize.to_sym
-        @fields = [:id]
+        @fields = []
         @filter = nil
         @order_by = nil
         @links = {}
@@ -129,7 +129,10 @@ module PgGraphQl
         end
       end
       def fields=(fields)
-        @fields = (fields + [:id]).uniq
+        @fields = fields
+      end
+      def fields
+        @fields + [:id] + (@subtypes.empty? ? [] : [:type])
       end
       def map(field, column_expr)
         @mappings[field] = column_expr
