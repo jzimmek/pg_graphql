@@ -45,17 +45,32 @@ module PgGraphQl
             nested_link_name = f[0]
             field_name = f[0]
 
-            raise "unknown field #{field_name.inspect} on type #{type.name.inspect}" if !f[1].is_a?(Hash) && !type.fields.include?(field_name)
+            raise "unknown field #{field_name.inspect} on type #{type.name.inspect}" if !f[1].is_a?(Hash) && !type.fields.detect{|f| f[:name] == field_name}
             raise "unknown link #{field_name.inspect} on type #{type.name.inspect}" if f[1].is_a?(Hash) && !type.links.include?(field_name)
 
-            column_name = field_name.to_s.index("__") ? field_name.to_s.gsub(/__/, ".").to_sym : field_name
+            if f[1].is_a?(Hash)
+              "(" + to_sql([f].to_h, level + 1, type, nested_link_name) + ") as #{field_name}"
+            else
+              field_def = type.fields.detect{|f| f[:name] == field_name}
 
-            column_expr = type.mappings[field_name] || column_name
+              column_name = field_def[:name].to_s.index("__") ? field_def[:name].to_s.gsub(/__/, ".").to_sym : field_def[:name]
+              # column_expr = type.mappings[field_name] || column_name
 
-            (f[1].is_a?(Hash) ? "(" + to_sql([f].to_h, level + 1, type, nested_link_name) + ") as #{field_name}" : ((column_name == field_name && column_name == column_expr) ? column_name.to_s : "#{column_expr} as #{field_name}"))
+              column_expr = if field_def[:expr]
+                field_def[:expr].call(column_name)
+              else
+                column_name
+              end
+
+              if (column_name == field_name && column_name == column_expr)
+                column_name.to_s
+              else
+                "#{column_expr}" + (field_def[:as] ? " as #{field_def[:as]}" : "")
+              end
+            end
+
           end.join(",")
 
-          # is_many = (link && link.many?) || ids.is_a?(Array) || (level == 1 && !ids && type.null_pk == :array)
           is_many = (link && link.many?) || (level == 1 && ids.is_a?(Array)) || (level == 1 && !ids && type.null_pk == :array)
           order_by = link.try(:order_by) || type.try(:order_by)
 
@@ -117,10 +132,9 @@ module PgGraphQl
         @order_by = nil
         @links = {}
         @subtypes = {}
-        @mappings = {}
         @null_pk = false
         @pk = ->(ids, level) do
-          id_column = @mappings[:id] || "id"
+          id_column = "#{@table}.id"
           if ids.is_a?(Array)
             "#{id_column} in (" + ids.map{|id| id.is_a?(String) ? "'#{id}'" : id.to_s}.join(',') + ")"
           else
@@ -129,14 +143,26 @@ module PgGraphQl
         end
       end
       def fields=(fields)
-        @fields = fields
+        fields.each do |f|
+          raise "do not add :id in fields; it will be added automatically" if f == :id || (f.is_a?(Hash) && f[:name] == :id)
+        end
+        @fields = fields.map{|f| create_field(f)}
       end
       def fields
-        @fields + [:id] + (@subtypes.empty? ? [] : [:type])
+        @fields + [create_field({name: :id, as: nil, expr: ->(c){ "#{@table}.#{c}" }})] + (@subtypes.empty? ? [] : [create_field(:type)])
       end
-      def map(field, column_expr)
-        @mappings[field] = column_expr
+      def create_field(field)
+        if field.is_a?(Symbol)
+          {name: field, as: field}
+        elsif field.is_a?(Hash)
+          raise "missing field :name #{field.inspect}" unless field[:name]
+          field[:as] = field[:name] unless field.key?(:as)
+          field
+        else
+          raise "unsupported field #{field.inspect}"
+        end         
       end
+
       def one(name, opts={})
         create_link(name, false, opts)
       end
