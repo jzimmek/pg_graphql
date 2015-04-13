@@ -15,9 +15,12 @@ module PgGraphQl
         unwrapped_sql
       end
       
-      sql = s.to_sql(query)
+      res = s.to_sql(query)
+
+      sql, params = res.values_at(:sql, :params)
       puts sql if print_sql
-      sql
+
+      res
     end
 
     def test_simple
@@ -32,9 +35,11 @@ module PgGraphQl
             from (select users.id,
                   email
                 from users
-                where users.id = 1 limit 1) x) as value      
+                where users.id = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+
+      assert_equal [1], res[:params]
 
       # ---
 
@@ -49,9 +54,10 @@ module PgGraphQl
             from (select users.id,
                   email
                 from users
-                where users.id = 1 limit 1) x) as value      
+                where users.id = ? limit 1) x) as value      
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal [1], res[:params]
 
       # ---
 
@@ -65,9 +71,11 @@ module PgGraphQl
           (select to_json(coalesce(json_agg(x.*), '[]'::json))
             from (select users.id,
                   email
-                from users) x) as value      
+                from users) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal [], res[:params]
+
     end
 
     def test_simple_fail_when_accessing_non_root
@@ -106,7 +114,7 @@ module PgGraphQl
     def test_simple_pk_custom
       res = to_sql({user: {id: "1", email: "email"}}) do |s|
         s.root :user
-        s.type :user, fields: [:email], pk: ->(id, level){ "access_token = '#{id}'" }
+        s.type :user, fields: [:email], pk: ->(id, level){ ["access_token = ?", id] }
       end
 
       assert_equal token(<<-SQL
@@ -114,15 +122,16 @@ module PgGraphQl
           (select to_json(x.*)
             from (select users.id,
                   email
-                from users where access_token = '1' limit 1) x) as value
+                from users where access_token = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal ["1"], res[:params]
     end
 
     def test_simple_pk_with_level
       res = to_sql({user: {id: "99", email: "email"}}) do |s|
         s.root :user
-        s.type :user, fields: [:email], pk: ->(id, level){ "level#{level} = '#{id}'" }
+        s.type :user, fields: [:email], pk: ->(id, level){ ["level#{level} = ?", id] }
       end
 
       assert_equal token(<<-SQL
@@ -130,9 +139,10 @@ module PgGraphQl
           (select to_json(x.*)
             from (select users.id,
                   email
-                from users where level1 = '99' limit 1) x) as value
+                from users where level1 = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal ["99"], res[:params]
     end
 
     def test_simple_pk_type_handling
@@ -146,9 +156,10 @@ module PgGraphQl
           (select to_json(coalesce(json_agg(x.*), '[]'::json))
             from (select users.id,
                   email
-                from users where users.id in ('1')) x) as value      
+                from users where users.id in ?) x) as value      
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal [["1"]], res[:params]
 
       # ---
 
@@ -162,9 +173,10 @@ module PgGraphQl
           (select to_json(x.*)
             from (select users.id,
                   email
-                from users where users.id = '1' limit 1) x) as value      
+                from users where users.id = ? limit 1) x) as value      
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal ["1"], res[:params]
     end
 
     def test_simple_pk_array_one
@@ -178,9 +190,10 @@ module PgGraphQl
           (select to_json(coalesce(json_agg(x.*), '[]'::json))
             from (select users.id,
                   email
-                from users where users.id in (1)) x) as value      
+                from users where users.id in ?) x) as value      
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal [[1]], res[:params]
     end
 
     def test_simple_pk_array_multiple
@@ -194,9 +207,10 @@ module PgGraphQl
           (select to_json(coalesce(json_agg(x.*), '[]'::json))
             from (select users.id,
                   email
-                from users where users.id in (1,2)) x) as value      
+                from users where users.id in ?) x) as value      
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal [[1,2]], res[:params]
 
       # ---
 
@@ -210,9 +224,10 @@ module PgGraphQl
           (select to_json(coalesce(json_agg(x.*), '[]'::json))
             from (select users.id,
                   email
-                from users where users.id in ('1','2')) x) as value      
+                from users where users.id in ?) x) as value      
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal [["1","2"]], res[:params]
     end
 
     def test_simple_filter
@@ -227,9 +242,10 @@ module PgGraphQl
             from (select users.id,
                   email
                 from users
-                where users.id = 1 and (id > 100) limit 1) x) as value      
+                where users.id = ? and (id > 100) limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal [1], res[:params]
     end
 
     def test_simple_multiple
@@ -246,14 +262,15 @@ module PgGraphQl
             from (select users.id,
                   email
                 from users
-                where users.id = 1 limit 1) x) as value
+                where users.id = ? limit 1) x) as value
         union all
         select 'educator'::text as key,
           (select to_json(x.*)
             from (select educators.id
-                from educators where educators.id = 99 limit 1) x) as value
+                from educators where educators.id = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal [1, 99], res[:params]
     end
 
     def test_simple_strange_nested_to_json_for_json_datatype_with_column_alias
@@ -268,9 +285,10 @@ module PgGraphQl
       end
 
       assert_equal token(<<-SQL
-        select 'flow'::text as key, (select to_json(x.*) from (select flows.id, data from flows where flows.id = 1 limit 1) x) as value
+        select 'flow'::text as key, (select to_json(x.*) from (select flows.id, data from flows where flows.id = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal [1], res[:params]
 
       # ------
 
@@ -282,9 +300,10 @@ module PgGraphQl
       end
 
       assert_equal token(<<-SQL
-        select 'flow'::text as key, (select to_json(x.*) from (select flows.id, data from flows where flows.id = 1 limit 1) x) as value
+        select 'flow'::text as key, (select to_json(x.*) from (select flows.id, data from flows where flows.id = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal [1], res[:params]
 
       # ------
 
@@ -296,9 +315,10 @@ module PgGraphQl
       end
 
       assert_equal token(<<-SQL
-        select 'flow'::text as key, (select to_json(x.*) from (select flows.id, to_json(data) as data from flows where flows.id = 1 limit 1) x) as value
+        select 'flow'::text as key, (select to_json(x.*) from (select flows.id, to_json(data) as data from flows where flows.id = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal [1], res[:params]
 
       # ------ positive check
 
@@ -310,9 +330,10 @@ module PgGraphQl
       end
 
       assert_equal token(<<-SQL
-        select 'flow'::text as key, (select to_json(x.*) from (select flows.id, to_json(data) from flows where flows.id = 1 limit 1) x) as value
+        select 'flow'::text as key, (select to_json(x.*) from (select flows.id, to_json(data) from flows where flows.id = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal [1], res[:params]
 
     end
 
@@ -370,7 +391,8 @@ module PgGraphQl
                 left join product_clickouts as clickout on (clickout.id = products.id
                     and products.type = 'clickout')) x) as value
       SQL
-      ), token(res)      
+      ), token(res[:sql])
+      assert_equal [], res[:params]
     end
 
     def test_inherit_with_pk
@@ -393,9 +415,10 @@ module PgGraphQl
                   clickout.destination_url as clickout__destination_url
                 from products
                 left join product_clickouts as clickout on (clickout.id = products.id
-                    and products.type = 'clickout') where products.id = 1 limit 1) x) as value
+                    and products.type = 'clickout') where products.id = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal [1], res[:params]
       
     end
 
@@ -421,11 +444,12 @@ module PgGraphQl
                   (select to_json(x.*)
                     from (select addresses.id
                         from addresses
-                        where addresses.id = '99' and (id = users.address_id) limit 1) x) as address
+                        where addresses.id = ? and (id = users.address_id) limit 1) x) as address
                 from users
-                where users.id = 1 limit 1) x) as value
+                where users.id = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal ["99", 1], res[:params]
     end
 
     def test_link_one_nested_pk
@@ -445,11 +469,12 @@ module PgGraphQl
                   (select to_json(x.*)
                     from (select addresses.id
                         from addresses
-                        where addresses.id = 99 and (id = users.address_id) limit 1) x) as address
+                        where addresses.id = ? and (id = users.address_id) limit 1) x) as address
                 from users
-                where users.id = 1 limit 1) x) as value
+                where users.id = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal [99, 1], res[:params]
 
       res = to_sql({user: {id: 1, email: "email", address: {id: [99,999]}}}) do |s|
         s.root :user
@@ -467,11 +492,12 @@ module PgGraphQl
                   (select to_json(x.*)
                     from (select addresses.id
                         from addresses
-                        where addresses.id in (99,999) and (id = users.address_id) limit 1) x) as address
+                        where addresses.id in ? and (id = users.address_id) limit 1) x) as address
                 from users
-                where users.id = 1 limit 1) x) as value
+                where users.id = ? limit 1) x) as value
       SQL
-      ), token(res)    
+      ), token(res[:sql])
+      assert_equal [[99,999], 1], res[:params]
     end
 
     def test_link_one_empty_fields
@@ -493,9 +519,10 @@ module PgGraphQl
                         from addresses
                         where (id = users.address_id) limit 1) x) as address
                 from users
-                where users.id = 1 limit 1) x) as value
+                where users.id = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal [1], res[:params]
     end
 
     def test_link_one_missing_fk
@@ -528,11 +555,12 @@ module PgGraphQl
                   (select to_json(x.*)
                     from (select addresses.id
                         from addresses
-                        where addresses.id = '99' and (id = (select 100)) limit 1) x) as address
+                        where addresses.id = ? and (id = (select 100)) limit 1) x) as address
                 from users
-                where users.id = 1 limit 1) x) as value
+                where users.id = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal ["99", 1], res[:params]
     end
 
     def test_link_one_filter
@@ -552,11 +580,12 @@ module PgGraphQl
                   (select to_json(x.*)
                     from (select addresses.id
                         from addresses
-                        where addresses.id = '99' and (user_id = users.id) and (id > 100) limit 1) x) as address
+                        where addresses.id = ? and (user_id = users.id) and (id > 100) limit 1) x) as address
                 from users
-                where users.id = 1 limit 1) x) as value
+                where users.id = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal ["99", 1], res[:params]
     end
 
     def test_link_one_order_by
@@ -576,11 +605,12 @@ module PgGraphQl
                   (select to_json(x.*)
                     from (select addresses.id
                         from addresses
-                        where addresses.id = '99' and (user_id = users.id) order by id desc limit 1) x) as address
+                        where addresses.id = ? and (user_id = users.id) order by id desc limit 1) x) as address
                 from users
-                where users.id = 1 limit 1) x) as value
+                where users.id = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal ["99", 1], res[:params]
     end
 
     #####################
@@ -613,14 +643,15 @@ module PgGraphQl
                         from addresses
                         where (user_id = users.id) limit 1) x) as address
                 from users
-                where users.id = 1 limit 1) x) as value
+                where users.id = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal [1], res[:params]
     end
 
-    # #####################
-    # # many
-    # #####################
+    #####################
+    # many
+    #####################
 
 
     def test_link_many
@@ -640,11 +671,12 @@ module PgGraphQl
                   (select to_json(coalesce(json_agg(x.*), '[]'::json))
                     from (select addresses.id
                         from addresses
-                        where addresses.id = '99' and (user_id = users.id)) x) as address
+                        where addresses.id = ? and (user_id = users.id)) x) as address
                 from users
-                where users.id = 1 limit 1) x) as value
+                where users.id = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal ["99", 1], res[:params]
     end
 
     def test_link_many_nested_pk
@@ -664,11 +696,12 @@ module PgGraphQl
                   (select to_json(coalesce(json_agg(x.*), '[]'::json))
                     from (select addresses.id
                         from addresses
-                        where addresses.id in ('99','999') and (user_id = users.id)) x) as address
+                        where addresses.id in ? and (user_id = users.id)) x) as address
                 from users
-                where users.id = 1 limit 1) x) as value
+                where users.id = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal [["99","999"], 1], res[:params]
     end
 
     def test_link_many_empty_fields
@@ -690,9 +723,10 @@ module PgGraphQl
                         from addresses
                         where (user_id = users.id)) x) as address
                 from users
-                where users.id = 1 limit 1) x) as value
+                where users.id = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal [1], res[:params]
     end
 
     def test_link_many_filter
@@ -712,11 +746,12 @@ module PgGraphQl
                   (select to_json(coalesce(json_agg(x.*), '[]'::json))
                     from (select addresses.id
                         from addresses
-                        where addresses.id = '99' and (user_id = users.id) and (id % 2 = 0)) x) as address
+                        where addresses.id = ? and (user_id = users.id) and (id % 2 = 0)) x) as address
                 from users
-                where users.id = 1 limit 1) x) as value
+                where users.id = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal ["99", 1], res[:params]
     end
 
     def test_link_many_order_by
@@ -736,11 +771,12 @@ module PgGraphQl
                   (select to_json(coalesce(json_agg(x.*), '[]'::json))
                     from (select addresses.id
                         from addresses
-                        where addresses.id = '99' and (user_id = users.id) order by id desc) x) as address
+                        where addresses.id = ? and (user_id = users.id) order by id desc) x) as address
                 from users
-                where users.id = 1 limit 1) x) as value
+                where users.id = ? limit 1) x) as value
       SQL
-      ), token(res)
+      ), token(res[:sql])
+      assert_equal ["99", 1], res[:params]
     end
 
   end

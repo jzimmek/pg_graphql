@@ -1,4 +1,5 @@
 require "active_support/all"
+require "sequel"
 require "pggraphql/version"
 
 module PgGraphQl
@@ -23,7 +24,18 @@ module PgGraphQl
       yield(type) if block_given?
     end
 
-    def to_sql(query, level=0, parent=nil, link_name=nil)
+    def handle_sql_part(part, params)
+      if part.is_a?(Array)
+        part.slice(1..-1).each{|param| params << param}
+        part[0]
+      elsif part.is_a?(String)
+        part
+      else
+        raise "unsupported sql part: #{part}"
+      end
+    end
+
+    def to_sql(query, level=0, params=[], parent=nil, link_name=nil)
       if level > 0
         query.map do |e|
           link = parent ? parent.links[link_name] : nil
@@ -49,7 +61,7 @@ module PgGraphQl
             raise "unknown link #{field_name.inspect} on type #{type.name.inspect}" if f[1].is_a?(Hash) && !type.links.include?(field_name)
 
             if f[1].is_a?(Hash)
-              "(" + to_sql([f].to_h, level + 1, type, nested_link_name) + ") as #{field_name}"
+              "(" + to_sql([f].to_h, level + 1, params, type, nested_link_name) + ") as #{field_name}"
             else
               field_def = type.fields.detect{|f| f[:name] == field_name}
 
@@ -78,13 +90,15 @@ module PgGraphQl
 
           raise "missing :id for root type #{type.name.inspect}" if !ids && level == 1 && !type.null_pk
 
-          wheres << type.pk.call(ids, level) if ids && type.pk.call(ids, level)
+          if ids && type.pk.call(ids, level)
+            wheres << handle_sql_part(type.pk.call(ids, level), params)
+          end
 
-          wheres << ("(" + type.filter + ")") if type.filter
+          wheres << ("(" + handle_sql_part(type.filter, params) + ")") if type.filter
 
           if link
-            wheres << ("(" + link.fk + ")")
-            wheres << ("(" + link.filter + ")") if link.filter
+            wheres << ("(" + handle_sql_part(link.fk, params) + ")")
+            wheres << ("(" + handle_sql_part(link.filter, params) + ")") if link.filter
           end
 
           sql = "select to_json("
@@ -97,7 +111,7 @@ module PgGraphQl
           unless type.subtypes.empty?
             sql += "\n" + type.subtypes.map do |f|
               subtype = f[1]
-              "left join #{subtype.table} as #{subtype.name} on (#{subtype.fk})"
+              "left join #{subtype.table} as #{subtype.name} on (#{handle_sql_part(subtype.fk, params)})"
             end.join("\n")
           end
 
@@ -109,10 +123,12 @@ module PgGraphQl
 
         end.join
       else
-        wrap_root(query.map do |e|          
-          sql = to_sql([e].to_h, 1)
+        root_sql = wrap_root(query.map do |e|          
+          sql = to_sql([e].to_h, 1, params)
           "select '#{e[0]}'::text as key, (#{sql}) as value"
         end.join("\nunion all\n"))
+
+        {sql: root_sql, params: params}
       end
     end
 
@@ -136,9 +152,11 @@ module PgGraphQl
         @pk = ->(ids, level) do
           id_column = "#{@table}.id"
           if ids.is_a?(Array)
-            "#{id_column} in (" + ids.map{|id| id.is_a?(String) ? "'#{id}'" : id.to_s}.join(',') + ")"
+            # "#{id_column} in (" + ids.map{|id| id.is_a?(String) ? "'#{id}'" : id.to_s}.join(',') + ")"
+            ["#{id_column} in ?", ids]
           else
-            "#{id_column} = " + (ids.is_a?(String) ? "'#{ids}'" : "#{ids}")
+            # "#{id_column} = " + (ids.is_a?(String) ? "'#{ids}'" : "#{ids}")
+            ["#{id_column} = ?", ids]
           end
         end
       end
