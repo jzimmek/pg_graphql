@@ -382,9 +382,9 @@ module PgGraphQl
                           (select to_json(coalesce(json_agg(x.*), '[]'::json))
                             from (select orders.id
                                 from orders
-                                where (user_id = users.id)) x) as orders
+                                where (user_id = users.id)) x) as "orders"
                         from users
-                        where (id = download.id)) x) as download__users
+                        where (id = download.id)) x) as "download__users"
                 from products
                 left join product_downloads as download on (download.id = products.id
                     and products.type = 'download')
@@ -444,7 +444,7 @@ module PgGraphQl
                   (select to_json(x.*)
                     from (select addresses.id
                         from addresses
-                        where addresses.id = ? and (id = users.address_id) limit 1) x) as address
+                        where addresses.id = ? and (id = users.address_id) limit 1) x) as "address"
                 from users
                 where users.id = ? limit 1) x) as value
       SQL
@@ -469,7 +469,7 @@ module PgGraphQl
                   (select to_json(x.*)
                     from (select addresses.id
                         from addresses
-                        where addresses.id = ? and (id = users.address_id) limit 1) x) as address
+                        where addresses.id = ? and (id = users.address_id) limit 1) x) as "address"
                 from users
                 where users.id = ? limit 1) x) as value
       SQL
@@ -492,7 +492,7 @@ module PgGraphQl
                   (select to_json(x.*)
                     from (select addresses.id
                         from addresses
-                        where addresses.id in ? and (id = users.address_id) limit 1) x) as address
+                        where addresses.id in ? and (id = users.address_id) limit 1) x) as "address"
                 from users
                 where users.id = ? limit 1) x) as value
       SQL
@@ -517,7 +517,7 @@ module PgGraphQl
                   (select to_json(x.*)
                     from (select addresses.id
                         from addresses
-                        where (id = users.address_id) limit 1) x) as address
+                        where (id = users.address_id) limit 1) x) as "address"
                 from users
                 where users.id = ? limit 1) x) as value
       SQL
@@ -555,7 +555,7 @@ module PgGraphQl
                   (select to_json(x.*)
                     from (select addresses.id
                         from addresses
-                        where addresses.id = ? and (id = (select 100)) limit 1) x) as address
+                        where addresses.id = ? and (id = (select 100)) limit 1) x) as "address"
                 from users
                 where users.id = ? limit 1) x) as value
       SQL
@@ -580,7 +580,7 @@ module PgGraphQl
                   (select to_json(x.*)
                     from (select addresses.id
                         from addresses
-                        where addresses.id = ? and (user_id = users.id) and (id > 100) limit 1) x) as address
+                        where addresses.id = ? and (user_id = users.id) and (id > 100) limit 1) x) as "address"
                 from users
                 where users.id = ? limit 1) x) as value
       SQL
@@ -605,7 +605,7 @@ module PgGraphQl
                   (select to_json(x.*)
                     from (select addresses.id
                         from addresses
-                        where addresses.id = ? and (user_id = users.id) order by id desc limit 1) x) as address
+                        where addresses.id = ? and (user_id = users.id) order by id desc limit 1) x) as "address"
                 from users
                 where users.id = ? limit 1) x) as value
       SQL
@@ -639,9 +639,9 @@ module PgGraphQl
                           (select to_json(x.*)
                             from (select countries.id
                                 from countries
-                                where (id = addresses.country_id) limit 1) x) as country
+                                where (id = addresses.country_id) limit 1) x) as "country"
                         from addresses
-                        where (user_id = users.id) limit 1) x) as address
+                        where (user_id = users.id) limit 1) x) as "address"
                 from users
                 where users.id = ? limit 1) x) as value
       SQL
@@ -671,7 +671,7 @@ module PgGraphQl
                   (select to_json(coalesce(json_agg(x.*), '[]'::json))
                     from (select addresses.id
                         from addresses
-                        where addresses.id = ? and (user_id = users.id)) x) as address
+                        where addresses.id = ? and (user_id = users.id)) x) as "address"
                 from users
                 where users.id = ? limit 1) x) as value
       SQL
@@ -696,7 +696,7 @@ module PgGraphQl
                   (select to_json(coalesce(json_agg(x.*), '[]'::json))
                     from (select addresses.id
                         from addresses
-                        where addresses.id in ? and (user_id = users.id)) x) as address
+                        where addresses.id in ? and (user_id = users.id)) x) as "address"
                 from users
                 where users.id = ? limit 1) x) as value
       SQL
@@ -721,7 +721,7 @@ module PgGraphQl
                   (select to_json(coalesce(json_agg(x.*), '[]'::json))
                     from (select addresses.id
                         from addresses
-                        where (user_id = users.id)) x) as address
+                        where (user_id = users.id)) x) as "address"
                 from users
                 where users.id = ? limit 1) x) as value
       SQL
@@ -746,7 +746,7 @@ module PgGraphQl
                   (select to_json(coalesce(json_agg(x.*), '[]'::json))
                     from (select addresses.id
                         from addresses
-                        where addresses.id = ? and (user_id = users.id) and (id % 2 = 0)) x) as address
+                        where addresses.id = ? and (user_id = users.id) and (id % 2 = 0)) x) as "address"
                 from users
                 where users.id = ? limit 1) x) as value
       SQL
@@ -771,7 +771,7 @@ module PgGraphQl
                   (select to_json(coalesce(json_agg(x.*), '[]'::json))
                     from (select addresses.id
                         from addresses
-                        where addresses.id = ? and (user_id = users.id) order by id desc) x) as address
+                        where addresses.id = ? and (user_id = users.id) order by id desc) x) as "address"
                 from users
                 where users.id = ? limit 1) x) as value
       SQL

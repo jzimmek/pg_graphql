@@ -38,8 +38,8 @@ module PgGraphQl
     def to_sql(query, level=0, params=[], parent=nil, link_name=nil)
       if level > 0
         query.map do |e|
-          link = parent ? parent.links[link_name] : nil
-          type = link ? link.type : self.types[e[0].to_s.singularize.to_sym]
+          link = parent ? parent.links[link_name.to_s.split("@").first.to_sym] : nil
+          type = link ? link.type : self.types[e[0].to_s.split("@").first.singularize.to_sym]
           ids = e[1][:id]
 
           raise "found :id with without value on type #{type.name.inspect}" if e[1].key?(:id) && ids.nil?
@@ -58,10 +58,10 @@ module PgGraphQl
             field_name = f[0]
 
             raise "unknown field #{field_name.inspect} on type #{type.name.inspect}" if !f[1].is_a?(Hash) && !type.fields.detect{|f| f[:name] == field_name}
-            raise "unknown link #{field_name.inspect} on type #{type.name.inspect}" if f[1].is_a?(Hash) && !type.links.include?(field_name)
+            raise "unknown link #{field_name.inspect} on type #{type.name.inspect}" if f[1].is_a?(Hash) && !type.links.include?(field_name.to_s.split("@").first.to_sym)
 
             if f[1].is_a?(Hash)
-              "(" + to_sql([f].to_h, level + 1, params, type, nested_link_name) + ") as #{field_name}"
+              "(" + to_sql([f].to_h, level + 1, params, type, nested_link_name) + ") as \"#{field_name}\""
             else
               field_def = type.fields.detect{|f| f[:name] == field_name}
 
