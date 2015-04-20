@@ -69,7 +69,7 @@ module PgGraphQl
               # column_expr = type.mappings[field_name] || column_name
 
               column_expr = if field_def[:expr]
-                field_def[:expr].call(column_name)
+                handle_sql_part(field_def[:expr].call(column_name), params)
               else
                 column_name
               end
@@ -97,7 +97,9 @@ module PgGraphQl
           wheres << ("(" + handle_sql_part(type.filter, params) + ")") if type.filter
 
           if link
-            wheres << ("(" + handle_sql_part(link.fk, params) + ")")
+            fk = link.fk.is_a?(Proc) ? link.fk.call(level) : link.fk
+
+            wheres << ("(" + handle_sql_part(fk, params) + ")")
             wheres << ("(" + handle_sql_part(link.filter, params) + ")") if link.filter
           end
 
@@ -106,12 +108,14 @@ module PgGraphQl
           sql += "x.*"
           sql += "), '[]'::json)" if is_many
           sql += ") from (select #{columns} from #{type.table}"
-
         
           unless type.subtypes.empty?
             sql += "\n" + type.subtypes.map do |f|
               subtype = f[1]
-              "left join #{subtype.table} as #{subtype.name} on (#{handle_sql_part(subtype.fk, params)})"
+              fk = subtype.fk.is_a?(Proc) ? subtype.fk.call(level) : subtype.fk
+              subtype_as = subtype.fk.is_a?(Proc) ? "#{subtype.name}#{level}" : subtype.name
+              # subtype_as = (link && parent && link.type == parent.name) ? "#{subtype.name}#{level}" : subtype.name
+              "left join #{subtype.table} as #{subtype_as} on (#{handle_sql_part(fk, params)})"
             end.join("\n")
           end
 
@@ -205,6 +209,7 @@ module PgGraphQl
 
     class SubType
       attr_accessor :name, :table, :fk
+      attr_reader :type
       def initialize(type, name)
         @type = type
         @name = name

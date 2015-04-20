@@ -23,6 +23,27 @@ module PgGraphQl
       res
     end
 
+    # def test_table_expr
+    #   res = to_sql({user: {id: 1, email: "email"}}) do |s|
+    #     s.root :user
+    #     s.type :user, fields: [:email] do |t|
+    #       t.table_expr = "select 1 as id, 'email@email' as email"
+    #     end
+    #   end
+
+    #   assert_equal token(<<-SQL
+    #     select 'user'::text as key,
+    #       (select to_json(x.*)
+    #         from (select users.id,
+    #               email
+    #             from (select 1 as id, 'email@email' as email) users
+    #             where users.id = ? limit 1) x) as value
+    #   SQL
+    #   ), token(res[:sql])
+
+    #   assert_equal [1], res[:params]
+    # end
+
     def test_simple
       res = to_sql({user: {id: 1, email: "email"}}) do |s|
         s.root :user
