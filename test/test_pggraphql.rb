@@ -23,27 +23,6 @@ module PgGraphQl
       res
     end
 
-    # def test_table_expr
-    #   res = to_sql({user: {id: 1, email: "email"}}) do |s|
-    #     s.root :user
-    #     s.type :user, fields: [:email] do |t|
-    #       t.table_expr = "select 1 as id, 'email@email' as email"
-    #     end
-    #   end
-
-    #   assert_equal token(<<-SQL
-    #     select 'user'::text as key,
-    #       (select to_json(x.*)
-    #         from (select users.id,
-    #               email
-    #             from (select 1 as id, 'email@email' as email) users
-    #             where users.id = ? limit 1) x) as value
-    #   SQL
-    #   ), token(res[:sql])
-
-    #   assert_equal [1], res[:params]
-    # end
-
     def test_simple
       res = to_sql({user: {id: 1, email: "email"}}) do |s|
         s.root :user
@@ -374,21 +353,16 @@ module PgGraphQl
         }
       }) do |s|
         s.root :product
-
         s.type :user, fields: [:email] do |t|
           t.many :orders, fk: "user_id = users.id"
         end
 
         s.type :order
-
         s.type :product, null_pk: :array, fields: [:type, :clickout__destination_url, :download__download_url] do |t|
-
           t.subtype :download, table: :product_downloads, fk: "download.id = products.id and products.type = 'download'"
           t.subtype :clickout, table: :product_clickouts, fk: "clickout.id = products.id and products.type = 'clickout'"
-
           t.many :download__users, type: :user, fk: "id = download.id"
         end
-
       end
 
       assert_equal token(<<-SQL
@@ -414,6 +388,57 @@ module PgGraphQl
       SQL
       ), token(res[:sql])
       assert_equal [], res[:params]
+
+      # ------
+
+      res = to_sql({
+        products: {
+          type: nil,
+          clickout__destination_url: nil,
+          download__download_url: nil,
+          download__users: {
+            orders: {}
+          }
+        }
+      }) do |s|
+        s.root :product
+        s.type :user, fields: [:email] do |t|
+          t.many :orders
+        end
+
+        s.type :order
+        s.type :product, null_pk: :array, fields: [:type, :clickout__destination_url, :download__download_url] do |t|
+          t.subtype :download, table: :product_downloads
+          t.subtype :clickout, table: :product_clickouts
+          t.many :download__users, type: :user
+        end
+      end
+
+      puts res[:sql]
+
+      assert_equal token(<<-SQL
+        select 'products'::text as key,
+          (select to_json(coalesce(json_agg(x.*), '[]'::json))
+            from (select products.id,
+                  type,
+                  clickout.destination_url as clickout__destination_url,
+                  download.download_url as download__download_url,
+                  (select to_json(coalesce(json_agg(x.*), '[]'::json))
+                    from (select users.id,
+                          (select to_json(coalesce(json_agg(x.*), '[]'::json))
+                            from (select orders.id
+                                from orders
+                                where (orders.user_id = users.id)) x) as "orders"
+                        from users
+                        where (users.product_id = download.id)) x) as "download__users"
+                from products
+                left join product_downloads as download on (download.id = products.id
+                    and products.type = 'download')
+                left join product_clickouts as clickout on (clickout.id = products.id
+                    and products.type = 'clickout')) x) as value
+      SQL
+      ), token(res[:sql])
+      assert_equal [], res[:params]    
     end
 
     def test_inherit_with_pk
@@ -447,6 +472,105 @@ module PgGraphQl
     # one
     #####################
 
+    def test_link_belongs_to
+      res = to_sql({user: {id: 1, email: "email", address: {id: "99"}}}) do |s|
+        s.root :user
+        s.type :user, fields: [:email] do |t|
+          t.one :address, fk: :belongs_to
+        end
+        s.type :address
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(x.*)
+            from (select users.id,
+                  email,
+                  (select to_json(x.*)
+                    from (select addresses.id
+                        from addresses
+                        where addresses.id = ? and (addresses.id = users.address_id) limit 1) x) as "address"
+                from users
+                where users.id = ? limit 1) x) as value
+      SQL
+      ), token(res[:sql])
+      assert_equal ["99", 1], res[:params]
+    end
+
+    def test_link_belongs_to___name_different_from_type
+      res = to_sql({user: {id: 1, email: "email", other_address: {id: "99"}}}) do |s|
+        s.root :user
+        s.type :user, fields: [:email] do |t|
+          t.one :other_address, type: :address, fk: :belongs_to
+        end
+        s.type :address
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(x.*)
+            from (select users.id,
+                  email,
+                  (select to_json(x.*)
+                    from (select addresses.id
+                        from addresses
+                        where addresses.id = ? and (addresses.id = users.other_address_id) limit 1) x) as "other_address"
+                from users
+                where users.id = ? limit 1) x) as value
+      SQL
+      ), token(res[:sql])
+      assert_equal ["99", 1], res[:params]
+    end
+
+    def test_link_has_one___name_different_from_type
+      res = to_sql({user: {id: 1, email: "email", other_address: {id: "99"}}}) do |s|
+        s.root :user
+        s.type :user, fields: [:email] do |t|
+          t.one :other_address, type: :address, fk: :has_one
+        end
+        s.type :address
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(x.*)
+            from (select users.id,
+                  email,
+                  (select to_json(x.*)
+                    from (select addresses.id
+                        from addresses
+                        where addresses.id = ? and (addresses.user_id = users.id) limit 1) x) as "other_address"
+                from users
+                where users.id = ? limit 1) x) as value
+      SQL
+      ), token(res[:sql])
+      assert_equal ["99", 1], res[:params]
+    end
+
+    def test_link_has_one
+      res = to_sql({user: {id: 1, email: "email", address: {id: "99"}}}) do |s|
+        s.root :user
+        s.type :user, fields: [:email] do |t|
+          t.one :address, fk: :has_one
+        end
+        s.type :address
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(x.*)
+            from (select users.id,
+                  email,
+                  (select to_json(x.*)
+                    from (select addresses.id
+                        from addresses
+                        where addresses.id = ? and (addresses.user_id = users.id) limit 1) x) as "address"
+                from users
+                where users.id = ? limit 1) x) as value
+      SQL
+      ), token(res[:sql])
+      assert_equal ["99", 1], res[:params]
+    end
 
     def test_link_one
       res = to_sql({user: {id: 1, email: "email", address: {id: "99"}}}) do |s|
@@ -693,6 +817,56 @@ module PgGraphQl
                     from (select addresses.id
                         from addresses
                         where addresses.id = ? and (user_id = users.id)) x) as "address"
+                from users
+                where users.id = ? limit 1) x) as value
+      SQL
+      ), token(res[:sql])
+      assert_equal ["99", 1], res[:params]
+
+      # ----
+
+      res = to_sql({user: {id: 1, email: "email", address: {id: "99"}}}) do |s|
+        s.root :user
+        s.type :user, fields: [:email] do |t|
+          t.many :address, fk: :many
+        end
+        s.type :address
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(x.*)
+            from (select users.id,
+                  email,
+                  (select to_json(coalesce(json_agg(x.*), '[]'::json))
+                    from (select addresses.id
+                        from addresses
+                        where addresses.id = ? and (addresses.user_id = users.id)) x) as "address"
+                from users
+                where users.id = ? limit 1) x) as value
+      SQL
+      ), token(res[:sql])
+      assert_equal ["99", 1], res[:params]
+
+      # ----
+
+      res = to_sql({user: {id: 1, email: "email", other_addresses: {id: "99"}}}) do |s|
+        s.root :user
+        s.type :user, fields: [:email] do |t|
+          t.many :other_addresses, type: :address, fk: :many
+        end
+        s.type :address
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(x.*)
+            from (select users.id,
+                  email,
+                  (select to_json(coalesce(json_agg(x.*), '[]'::json))
+                    from (select addresses.id
+                        from addresses
+                        where addresses.id = ? and (addresses.user_id = users.id)) x) as "other_addresses"
                 from users
                 where users.id = ? limit 1) x) as value
       SQL

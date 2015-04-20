@@ -99,6 +99,19 @@ module PgGraphQl
           if link
             fk = link.fk.is_a?(Proc) ? link.fk.call(level) : link.fk
 
+            if link_name.to_s.index("__")
+              subtype_type, subtype_link_name = link_name.to_s.split("__")
+
+              fk = "#{link.type.table}.id = #{subtype_type}.#{subtype_link_name}_id" if fk == :belongs_to
+              fk = "#{link.type.table}.#{parent.name}_id = #{subtype_type}.id" if fk == :has_one
+              fk = "#{link.type.table}.#{parent.name}_id = #{subtype_type}.id" if fk == :many
+            else
+              fk = "#{link.type.table}.id = #{parent.table}.#{link.name}_id" if fk == :belongs_to
+              fk = "#{link.type.table}.#{parent.name}_id = #{parent.table}.id" if fk == :has_one
+              fk = "#{link.type.table}.#{parent.name}_id = #{parent.table}.id" if fk == :many
+            end
+
+
             wheres << ("(" + handle_sql_part(fk, params) + ")")
             wheres << ("(" + handle_sql_part(link.filter, params) + ")") if link.filter
           end
@@ -113,6 +126,9 @@ module PgGraphQl
             sql += "\n" + type.subtypes.map do |f|
               subtype = f[1]
               fk = subtype.fk.is_a?(Proc) ? subtype.fk.call(level) : subtype.fk
+
+              fk = "#{subtype.name}.id = #{type.table}.id and #{type.table}.type = '#{subtype.name}'" if fk == :subtype
+
               subtype_as = subtype.fk.is_a?(Proc) ? "#{subtype.name}#{level}" : subtype.name
               # subtype_as = (link && parent && link.type == parent.name) ? "#{subtype.name}#{level}" : subtype.name
               "left join #{subtype.table} as #{subtype_as} on (#{handle_sql_part(fk, params)})"
@@ -188,12 +204,21 @@ module PgGraphQl
       def one(name, opts={})
         create_link(name, false, opts)
       end
+
+      def has_one(name, opts={})
+        one(name, opts.merge({fk: :has_one}))
+      end
+
+      def belongs_to(name, opts={})
+        one(name, opts.merge({fk: :belongs_to}))
+      end
+
       def many(name, opts={})
-        create_link(name, true, opts)
+        create_link(name, true, {fk: :many}.merge(opts))
       end
       def subtype(name, opts={})
         subtype = @subtypes[name] = SubType.new(self, name)
-        opts.each_pair do |key, val| 
+        {fk: :subtype}.merge(opts).each_pair do |key, val| 
           subtype.send(:"#{key}=", val)
         end
         subtype
