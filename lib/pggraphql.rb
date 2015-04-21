@@ -42,6 +42,8 @@ module PgGraphQl
           type = link ? link.type : self.types[e[0].to_s.split("@").first.singularize.to_sym]
           ids = e[1][:id]
 
+          raise "type not found: #{e[0]}; link_name: #{link_name}" unless type
+
           raise "found :id with without value on type #{type.name.inspect}" if e[1].key?(:id) && ids.nil?
           raise "found empty :id array on type #{type.name.inspect}" if e[1].key?(:id) && ids.is_a?(Array) && ids.empty?
 
@@ -110,7 +112,6 @@ module PgGraphQl
               fk = "#{link.type.table}.#{parent.name}_id = #{parent.table}.id" if fk == :has_one
               fk = "#{link.type.table}.#{parent.name}_id = #{parent.table}.id" if fk == :many
             end
-
 
             wheres << ("(" + handle_sql_part(fk, params) + ")")
             wheres << ("(" + handle_sql_part(link.filter, params) + ")") if link.filter
@@ -221,6 +222,7 @@ module PgGraphQl
         {fk: :subtype}.merge(opts).each_pair do |key, val| 
           subtype.send(:"#{key}=", val)
         end
+        yield(subtype) if block_given?
         subtype
       end
       def create_link(name, many, opts)
@@ -240,6 +242,18 @@ module PgGraphQl
         @name = name
         @table = nil
         @fk = nil
+      end
+      def has_one(name, opts={})
+        @type.has_one(:"#{@name}__#{name}", {type: name}.merge(opts))
+      end
+      def belongs_to(name, opts={})
+        @type.belongs_to(:"#{@name}__#{name}", {type: name}.merge(opts))
+      end
+      def one(name, opts={})
+        @type.one(:"#{@name}__#{name}", {type: name}.merge(opts))
+      end
+      def many(name, opts={})
+        @type.many(:"#{@name}__#{name}", {type: name}.merge(opts))
       end
     end
 
