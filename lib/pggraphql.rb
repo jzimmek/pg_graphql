@@ -71,7 +71,21 @@ module PgGraphQl
           type = link ? link.type : self.types[e[0].to_s.split("@").first.singularize.to_sym]
           ids = e[1][:id]
 
-          raise "type not found: #{e[0]}; link_name: #{link_name}" unless type
+          unless type            
+            ap({
+              "known types": self.types.keys,
+              "link name": link_name,
+              "link defined?": !link.nil?,
+              "link type": link.try(:type),
+              type: type.try(:name),
+              "parent?": !parent.nil?,
+              "parent type": parent.name,
+              ids: ids,
+              level: level
+            })
+
+            raise "type not found: '#{e[0]}'; link_name: '#{link_name}'"
+          end
 
           raise "found :id with without value on type #{type.name.inspect}" if e[1].key?(:id) && ids.nil?
           raise "found empty :id array on type #{type.name.inspect}" if e[1].key?(:id) && ids.is_a?(Array) && ids.empty?
