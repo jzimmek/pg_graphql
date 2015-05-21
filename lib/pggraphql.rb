@@ -24,9 +24,17 @@ module PgGraphQl
       yield(type) if block_given?
     end
 
-    def handle_sql_part(part, params, level, table_levels)
+    def handle_sql_part(part, params, level, table_levels, guard=nil)
       next_part = if part.is_a?(Array)
-        part.slice(1..-1).each{|param| params << param}
+        part.slice(1..-1).each do |param|
+          params << param
+        end
+
+        cnt1 = part[0].scan(/\?/).count
+        cnt2 = part.length - 1
+
+        raise "placeholder mismatch #{cnt1} != #{cnt2} in #{part}" if cnt1 != cnt2
+
         part[0]
       elsif part.is_a?(String)
         part
@@ -71,7 +79,7 @@ module PgGraphQl
           type = link ? link.type : self.types[e[0].to_s.split("@").first.singularize.to_sym]
           ids = e[1][:id]
 
-          unless type            
+          unless type
             ap({
               "known types": self.types.keys,
               "link name": link_name,
@@ -106,7 +114,22 @@ module PgGraphQl
             raise "unknown link #{field_name.inspect} on type #{type.name.inspect}" if f[1].is_a?(Hash) && !type.links.include?(field_name.to_s.split("@").first.to_sym)
 
             if f[1].is_a?(Hash)
-              "(" + to_sql([f].to_h, level + 1, params, table_levels, type, nested_link_name) + ") as \"#{field_name}\""
+              inner_sql_proc = ->{ "(" + to_sql([f].to_h, level + 1, params, table_levels, type, nested_link_name) + ")" }
+              inner_link = type.links[nested_link_name.to_s.split("@").first.to_sym]
+
+              inner_sql = if inner_link.guard
+                guarded_value = inner_link.many? ? "to_json('[]'::json)" : "null"
+                guard = handle_sql_part(inner_link.guard, params, level, table_levels)
+
+                "case
+                    when #{guard} then #{inner_sql_proc.call}
+                    else #{guarded_value}
+                  end"
+              else
+                inner_sql_proc.call
+              end
+
+              inner_sql + " as \"#{field_name}\""
             else
               field_def = type.fields.detect{|f| f[:name] == field_name}
 
@@ -115,15 +138,27 @@ module PgGraphQl
               else
                 field_def[:name]
               end
-              
+
               unless column_name.to_s.index(".")
                 column_name = :"{#{type.table}}.#{column_name}"
               end
 
-              column_expr = if field_def[:expr]
-                handle_sql_part(field_def[:expr].call(column_name), params, level, table_levels)
+              column_expr_proc = -> do
+                if field_def[:expr]
+                  handle_sql_part(field_def[:expr].call(column_name), params, level, table_levels)
+                else
+                  handle_sql_part("#{column_name}", params, level, table_levels)
+                end
+              end
+
+              column_expr = if field_def[:guard]
+                guard = handle_sql_part(field_def[:guard], params, level, table_levels)
+                column_expr = "case
+                    when #{guard} then #{column_expr_proc.call}
+                    else null
+                  end"
               else
-                handle_sql_part("#{column_name}", params, level, table_levels)
+                column_expr_proc.call
               end
 
               "#{column_expr}" + (field_def[:as] ? " as #{field_def[:as]}" : "")
@@ -170,7 +205,7 @@ module PgGraphQl
           sql += "x.*"
           sql += "), '[]'::json)" if is_many
           sql += ") from (select #{columns} from #{type.table} as #{table_as}"
-        
+
           unless type.subtypes.empty?
             sql += "\n" + type.subtypes.map do |f|
               subtype = f[1]
@@ -191,7 +226,7 @@ module PgGraphQl
 
         end.join
       else
-        root_sql = wrap_root(query.map do |e|          
+        root_sql = wrap_root(query.map do |e|
           sql = to_sql([e].to_h, 1, params, table_levels)
           "select '#{e[0]}'::text as key, (#{sql}) as value"
         end.join("\nunion all\n"))
@@ -244,7 +279,7 @@ module PgGraphQl
           field
         else
           raise "unsupported field #{field.inspect}"
-        end         
+        end
       end
 
       def one(name, opts={})
@@ -264,7 +299,7 @@ module PgGraphQl
       end
       def subtype(name, opts={})
         subtype = @subtypes[name] = SubType.new(self, name)
-        {fk: :subtype}.merge(opts).each_pair do |key, val| 
+        {fk: :subtype}.merge(opts).each_pair do |key, val|
           subtype.send(:"#{key}=", val)
         end
         yield(subtype) if block_given?
@@ -272,7 +307,7 @@ module PgGraphQl
       end
       def create_link(name, many, opts)
         link = @links[name] = Link.new(self, name, many)
-        opts.each_pair do |key, val| 
+        opts.each_pair do |key, val|
           link.send(:"#{key}=", val)
         end
         link
@@ -303,7 +338,7 @@ module PgGraphQl
     end
 
     class Link
-      attr_accessor :name, :filter, :fk, :order_by
+      attr_accessor :name, :filter, :fk, :order_by, :guard
       def initialize(owner, name, many)
         @owner = owner
         @name = name

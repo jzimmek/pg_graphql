@@ -14,7 +14,7 @@ module PgGraphQl
       s.class.send(:define_method, :wrap_root) do |unwrapped_sql|
         unwrapped_sql
       end
-      
+
       res = s.to_sql(query)
 
       sql, params = res.values_at(:sql, :params)
@@ -136,7 +136,7 @@ module PgGraphQl
             from (select users1.id,
                   users1.email as email
                 from users as users1
-                where users1.id = ? limit 1) x) as value      
+                where users1.id = ? limit 1) x) as value
       SQL
       ), token(res[:sql])
       assert_equal [1], res[:params]
@@ -158,6 +158,110 @@ module PgGraphQl
       ), token(res[:sql])
       assert_equal [], res[:params]
 
+    end
+
+    def test_guard_field
+      res = to_sql({user: {id: 1, email: nil}}) do |s|
+        s.root :user
+        s.type :user, fields: [{name: :email, guard: "true"}]
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(x.*)
+            from (select users1.id,
+                  case
+                    when true then users1.email
+                    else null
+                  end as email
+                from users as users1
+                where users1.id = ? limit 1) x) as value
+      SQL
+      ), token(res[:sql])
+    end
+
+    def test_guard_link_belongs_to
+      res = to_sql({user: {id: 1, email: nil, address: {id: "99"}}}) do |s|
+        s.root :user
+        s.type :user, fields: [:email] do |t|
+          t.belongs_to :address, guard: "true"
+        end
+        s.type :address
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(x.*)
+            from (select users1.id,
+                  users1.email as email,
+                  case
+                    when true then (select to_json(x.*)
+                      from (select addresses2.id
+                          from addresses as addresses2
+                          where addresses2.id = ? and (addresses2.id = users1.address_id) limit 1) x)
+                    else null
+                  end as "address"
+                from users as users1
+                where users1.id = ? limit 1) x) as value
+      SQL
+      ), token(res[:sql])
+      assert_equal ["99", 1], res[:params]
+    end
+
+    def test_guard_link_many
+      res = to_sql({user: {id: 1, email: nil, address: {id: "99"}}}) do |s|
+        s.root :user
+        s.type :user, fields: [:email] do |t|
+          t.many :address, guard: "true"
+        end
+        s.type :address
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(x.*)
+            from (select users1.id,
+                  users1.email as email,
+                  case
+                    when true then (select to_json(coalesce(json_agg(x.*), '[]'::json))
+                      from (select addresses2.id
+                          from addresses as addresses2
+                          where addresses2.id = ? and (addresses2.user_id = users1.id)) x)
+                    else to_json('[]'::json)
+                  end as "address"
+                from users as users1
+                where users1.id = ? limit 1) x) as value
+      SQL
+      ), token(res[:sql])
+    end
+
+    def test_guard_link_many_with_fk
+      res = to_sql({user: {id: 1, email: nil, address: {id: 99}}}) do |s|
+        s.root :user
+        s.type :user, fields: [:email] do |t|
+          t.many :address, guard: ["2 = ?", 2]
+        end
+        s.type :address
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(x.*)
+            from (select users1.id,
+                  users1.email as email,
+                  case
+                    when 2 = ? then (select to_json(coalesce(json_agg(x.*), '[]'::json))
+                      from (select addresses2.id
+                          from addresses as addresses2
+                          where addresses2.id = ? and (addresses2.user_id = users1.id)) x)
+                    else to_json('[]'::json)
+                  end as "address"
+                from users as users1
+                where users1.id = ? limit 1) x) as value
+      SQL
+      ), token(res[:sql])
+
+      assert_equal [2, 99, 1], res[:params]
     end
 
     def test_simple_fail_when_accessing_non_root
@@ -238,7 +342,7 @@ module PgGraphQl
           (select to_json(coalesce(json_agg(x.*), '[]'::json))
             from (select users1.id,
                   users1.email as email
-                from users as users1 where users1.id in ?) x) as value      
+                from users as users1 where users1.id in ?) x) as value
       SQL
       ), token(res[:sql])
       assert_equal [["1"]], res[:params]
@@ -255,7 +359,7 @@ module PgGraphQl
           (select to_json(x.*)
             from (select users1.id,
                   users1.email as email
-                from users as users1 where users1.id = ? limit 1) x) as value      
+                from users as users1 where users1.id = ? limit 1) x) as value
       SQL
       ), token(res[:sql])
       assert_equal ["1"], res[:params]
@@ -272,7 +376,7 @@ module PgGraphQl
           (select to_json(coalesce(json_agg(x.*), '[]'::json))
             from (select users1.id,
                   users1.email as email
-                from users as users1 where users1.id in ?) x) as value      
+                from users as users1 where users1.id in ?) x) as value
       SQL
       ), token(res[:sql])
       assert_equal [[1]], res[:params]
@@ -289,7 +393,7 @@ module PgGraphQl
           (select to_json(coalesce(json_agg(x.*), '[]'::json))
             from (select users1.id,
                   users1.email as email
-                from users as users1 where users1.id in ?) x) as value      
+                from users as users1 where users1.id in ?) x) as value
       SQL
       ), token(res[:sql])
       assert_equal [[1,2]], res[:params]
@@ -306,7 +410,7 @@ module PgGraphQl
           (select to_json(coalesce(json_agg(x.*), '[]'::json))
             from (select users1.id,
                   users1.email as email
-                from users as users1 where users1.id in ?) x) as value      
+                from users as users1 where users1.id in ?) x) as value
       SQL
       ), token(res[:sql])
       assert_equal [["1","2"]], res[:params]
@@ -470,7 +574,7 @@ module PgGraphQl
                     and products1.type = 'download')) x) as value
       SQL
       ), token(res[:sql])
-      assert_equal [], res[:params]    
+      assert_equal [], res[:params]
 
       # ------
 
@@ -520,7 +624,7 @@ module PgGraphQl
                     and products1.type = 'clickout')) x) as value
       SQL
       ), token(res[:sql])
-      assert_equal [], res[:params]          
+      assert_equal [], res[:params]
     end
 
     def test_inherit_with_pk
@@ -539,7 +643,7 @@ module PgGraphQl
       assert_equal token(<<-SQL
         select 'products'::text as key,
           (select to_json(x.*)
-            from (select products1.id, 
+            from (select products1.id,
                   products1.type as type,
                   clickout1.destination_url as clickout__destination_url
                 from products as products1
@@ -548,7 +652,7 @@ module PgGraphQl
       SQL
       ), token(res[:sql])
       assert_equal [1], res[:params]
-      
+
     end
 
     #####################
@@ -737,7 +841,7 @@ module PgGraphQl
           end
           s.type :address
         end
-      end      
+      end
     end
 
 
@@ -1030,6 +1134,27 @@ module PgGraphQl
       SQL
       ), token(res[:sql])
       assert_equal ["99", 1], res[:params]
+    end
+
+    def test_handle_sql_part
+      s = PgGraphQl::Schema.new
+
+      params = []
+      level = 1
+      table_levels={}
+
+      assert_equal "users1.id = 1", s.handle_sql_part("{users}.id = 1", params, level, table_levels)
+      assert_equal "users2.id = 2", s.handle_sql_part("{users}.id = 2", params, level + 1, table_levels)
+      assert_equal "users1.id = 3", s.handle_sql_part("{users}.id = 3", params, level, table_levels)
+
+      assert_equal "users1.id = ?", s.handle_sql_part(["{users}.id = ?", 101], params, level, table_levels)
+      assert_equal "users2.id = ?", s.handle_sql_part(["{users}.id = ?", 102], params, level + 1, table_levels)
+      assert_equal "users1.id = ?", s.handle_sql_part(["{users}.id = ?", 103], params, level, table_levels)
+
+      assert_equal "users1.id = ?", s.handle_sql_part(["{users}.id = ?", 101], params, level, table_levels)
+      assert_equal "educators2.id = ?", s.handle_sql_part(["{educators}.id = ?", 102], params, level + 1, table_levels)
+      assert_equal "users1.id = ?", s.handle_sql_part(["{users}.id = ?", 103], params, level, table_levels)
+      assert_equal "educators1.id = ?", s.handle_sql_part(["{educators}.id = ?", 104], params, level, table_levels)
     end
 
   end
