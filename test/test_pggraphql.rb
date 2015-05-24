@@ -160,6 +160,65 @@ module PgGraphQl
 
     end
 
+    def test_simple_table_query
+      res = to_sql({user: {id: 1, email: nil}}) do |s|
+        s.root :user
+        s.type :user, fields: [:email] do |t|
+          t.table_query = "select 1 as id, 'my@domain' as email"
+        end
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(x.*)
+            from (select users1.id,
+                  users1.email as email
+                from (select 1 as id, 'my@domain' as email) as users1
+                where users1.id = ? limit 1) x) as value
+      SQL
+      ), token(res[:sql])
+
+      # ----
+
+      res = to_sql({user: {id: 1, email: nil}}) do |s|
+        s.root :user
+        s.type :user, fields: [:email] do |t|
+          t.table_query = "select 1 as id, 'my@domain' as email where {users}.id > 0"
+        end
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(x.*)
+            from (select users1.id,
+                  users1.email as email
+                from (select 1 as id, 'my@domain' as email where users1.id > 0) as users1
+                where users1.id = ? limit 1) x) as value
+      SQL
+      ), token(res[:sql])
+    end
+
+    def test_simple_table_query_with_params
+      res = to_sql({user: {id: 1, email: nil}}) do |s|
+        s.root :user
+        s.type :user, fields: [:email] do |t|
+          t.table_query = ["select ? as id, 'my@domain' as email", 99]
+        end
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(x.*)
+            from (select users1.id,
+                  users1.email as email
+                from (select ? as id, 'my@domain' as email) as users1
+                where users1.id = ? limit 1) x) as value
+      SQL
+      ), token(res[:sql])
+
+      assert_equal [99, 1], res[:params]
+    end
+
     def test_guard_field
       res = to_sql({user: {id: 1, email: nil}}) do |s|
         s.root :user
@@ -653,6 +712,66 @@ module PgGraphQl
       ), token(res[:sql])
       assert_equal [1], res[:params]
 
+    end
+
+    def test_inherit_with_table_query
+      res = to_sql({
+        products: {
+          id: 1,
+          clickout__destination_url: nil
+        }
+      }) do |s|
+        s.root :product
+        s.type :product, null_pk: :array, fields: [:clickout__destination_url] do |t|
+          t.subtype :clickout, table: :product_clickouts do |st|
+            st.table_query = <<-SQL
+              select 1 as id, 'someurl' as destination_url
+            SQL
+          end
+        end
+      end
+
+      assert_equal token(<<-SQL
+        select 'products'::text as key,
+          (select to_json(x.*)
+            from (select products1.id,
+                  products1.type as type,
+                  clickout1.destination_url as clickout__destination_url
+                from products as products1
+                left join (select 1 as id, 'someurl' as destination_url) as clickout1 on (clickout1.id = products1.id
+                    and products1.type = 'clickout') where products1.id = ? limit 1) x) as value
+      SQL
+      ), token(res[:sql])
+      assert_equal [1], res[:params]
+
+      # ----
+
+      res = to_sql({
+        products: {
+          id: 1,
+          clickout__destination_url: nil
+        }
+      }) do |s|
+        s.root :product
+        s.type :product, null_pk: :array, fields: [:clickout__destination_url] do |t|
+          t.subtype :clickout, table: :product_clickouts do |st|
+            st.table_query = ["select 1 as id, ? as destination_url", "someurl"]
+          end
+        end
+      end
+
+      assert_equal token(<<-SQL
+        select 'products'::text as key,
+          (select to_json(x.*)
+            from (select products1.id,
+                  products1.type as type,
+                  clickout1.destination_url as clickout__destination_url
+                from products as products1
+                left join (select 1 as id, ? as destination_url) as clickout1 on (clickout1.id = products1.id
+                    and products1.type = 'clickout') where products1.id = ? limit 1) x) as value
+      SQL
+      ), token(res[:sql])
+      assert_equal ["someurl", 1], res[:params]
     end
 
     #####################

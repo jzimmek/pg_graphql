@@ -169,6 +169,29 @@ module PgGraphQl
           is_many = (link && link.many?) || (level == 1 && ids.is_a?(Array)) || (level == 1 && !ids && type.null_pk == :array)
           order_by = link.try(:order_by) || type.try(:order_by)
 
+          table_query = if type.table_query
+            "(" + handle_sql_part(type.table_query, params, level, table_levels).to_s + ")"
+          else
+            type.table.to_s
+          end
+
+          subtypes = type.subtypes.map do |f|
+            subtype = f[1]
+            fk = subtype.fk.is_a?(Proc) ? subtype.fk.call(level) : subtype.fk
+
+            fk = "{#{subtype.name}}.id = {#{type.table}}.id and {#{type.table}}.type = '#{subtype.name}'" if fk == :subtype
+
+            subtype_table_query = if subtype.table_query
+              "(" + handle_sql_part(subtype.table_query, params, level, table_levels).to_s + ")"
+            else
+              subtype.table.to_s
+            end
+
+            subtype_as = handle_sql_part("{#{subtype.name}}", params, level, table_levels)
+
+            "left join #{subtype_table_query} as #{subtype_as} on (#{handle_sql_part(fk, params, level, table_levels)})"
+          end
+
           wheres = []
 
           raise "missing :id for root type #{type.name.inspect}" if !ids && level == 1 && !type.null_pk
@@ -204,20 +227,22 @@ module PgGraphQl
           sql += "coalesce(json_agg(" if is_many
           sql += "x.*"
           sql += "), '[]'::json)" if is_many
-          sql += ") from (select #{columns} from #{type.table} as #{table_as}"
+          sql += ") from (select #{columns} from #{table_query} as #{table_as}"
 
-          unless type.subtypes.empty?
-            sql += "\n" + type.subtypes.map do |f|
-              subtype = f[1]
-              fk = subtype.fk.is_a?(Proc) ? subtype.fk.call(level) : subtype.fk
 
-              fk = "{#{subtype.name}}.id = {#{type.table}}.id and {#{type.table}}.type = '#{subtype.name}'" if fk == :subtype
-              subtype_as = handle_sql_part("{#{subtype.name}}", params, level, table_levels)
+          sql += "\n" + subtypes.join("\n") unless subtypes.empty?
 
-              "left join #{subtype.table} as #{subtype_as} on (#{handle_sql_part(fk, params, level, table_levels)})"
-            end.join("\n")
-          end
+          # unless type.subtypes.empty?
+          #   sql += "\n" + type.subtypes.map do |f|
+          #     subtype = f[1]
+          #     fk = subtype.fk.is_a?(Proc) ? subtype.fk.call(level) : subtype.fk
 
+          #     fk = "{#{subtype.name}}.id = {#{type.table}}.id and {#{type.table}}.type = '#{subtype.name}'" if fk == :subtype
+          #     subtype_as = handle_sql_part("{#{subtype.name}}", params, level, table_levels)
+
+          #     "left join #{subtype.table} as #{subtype_as} on (#{handle_sql_part(fk, params, level, table_levels)})"
+          #   end.join("\n")
+          # end
 
           sql += " where #{wheres.join(' and ')}" unless wheres.empty?
           sql += " order by #{handle_sql_part(order_by, params, level, table_levels)}" if order_by
@@ -240,12 +265,13 @@ module PgGraphQl
     end
 
     class Type
-      attr_accessor :name, :table, :links, :order_by, :filter, :subtypes, :pk, :null_pk
+      attr_accessor :name, :table, :table_query, :links, :order_by, :filter, :subtypes, :pk, :null_pk
       attr_reader :schema, :mappings, :fields
       def initialize(schema, name)
         @schema = schema
         @name = name
         @table = name.to_s.pluralize.to_sym
+        @table_query = nil
         @fields = []
         @filter = nil
         @order_by = nil
@@ -315,13 +341,14 @@ module PgGraphQl
     end
 
     class SubType
-      attr_accessor :name, :table, :fk
+      attr_accessor :name, :table, :fk, :table_query
       attr_reader :type
       def initialize(type, name)
         @type = type
         @name = name
         @table = nil
         @fk = nil
+        @table_query = nil
       end
       def has_one(name, opts={})
         @type.has_one(:"#{@name}__#{name}", {type: name}.merge(opts))
