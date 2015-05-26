@@ -160,6 +160,23 @@ module PgGraphQl
 
     end
 
+    def test_simple_igore_dollar_fields
+      res = to_sql({user: {id: 1, email: nil, :"$custom" => nil}}) do |s|
+        s.root :user
+        s.type :user, fields: [:email]
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(x.*)
+            from (select users1.id,
+                  users1.email as email
+                from users as users1
+                where users1.id = ? limit 1) x) as value
+      SQL
+      ), token(res[:sql])
+    end
+
     def test_simple_table_query
       res = to_sql({user: {id: 1, email: nil}}) do |s|
         s.root :user
@@ -193,6 +210,25 @@ module PgGraphQl
             from (select users1.id,
                   users1.email as email
                 from (select 1 as id, 'my@domain' as email where users1.id > 0) as users1
+                where users1.id = ? limit 1) x) as value
+      SQL
+      ), token(res[:sql])
+
+      # ----
+
+      res = to_sql({user: {id: 1, email: nil}}) do |s|
+        s.root :user
+        s.type :user, fields: [:email] do |t|
+          t.table_query = ->(query){ "select 1 as id, 'my@domain' as email" }
+        end
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(x.*)
+            from (select users1.id,
+                  users1.email as email
+                from (select 1 as id, 'my@domain' as email) as users1
                 where users1.id = ? limit 1) x) as value
       SQL
       ), token(res[:sql])

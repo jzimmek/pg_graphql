@@ -104,7 +104,7 @@ module PgGraphQl
 
           requested_fields = {id: nil} # always add :id field
           requested_fields = requested_fields.merge(type: nil) unless type.subtypes.empty? # always add :subtype
-          requested_fields = requested_fields.merge(e[1])
+          requested_fields = requested_fields.merge(e[1].reject{|f| f.to_s =~ /^\$/})
 
           columns = requested_fields.map do |f|
             nested_link_name = f[0]
@@ -170,7 +170,8 @@ module PgGraphQl
           order_by = link.try(:order_by) || type.try(:order_by)
 
           table_query = if type.table_query
-            "(" + handle_sql_part(type.table_query, params, level, table_levels).to_s + ")"
+            sql_part = type.table_query.is_a?(Proc) ? type.table_query.call(e[1]) : type.table_query
+            "(" + handle_sql_part(sql_part, params, level, table_levels).to_s + ")"
           else
             type.table.to_s
           end
