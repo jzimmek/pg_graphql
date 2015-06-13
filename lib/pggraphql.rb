@@ -145,7 +145,7 @@ module PgGraphQl
 
               column_expr_proc = -> do
                 if field_def[:expr]
-                  handle_sql_part(field_def[:expr].call(column_name), params, level, table_levels)
+                  handle_sql_part(field_def[:expr].call(column_name, e[1]), params, level, table_levels)
                 else
                   handle_sql_part("#{column_name}", params, level, table_levels)
                 end
@@ -295,7 +295,7 @@ module PgGraphQl
         @fields = fields.map{|f| create_field(f)}
       end
       def fields
-        @fields + [create_field({name: :id, as: nil, expr: ->(c){ "#{c}" }})] + (@subtypes.empty? ? [] : [create_field(:type)])
+        @fields + [create_field({name: :id, as: nil, expr: ->(c, query){ "#{c}" }})] + (@subtypes.empty? ? [] : [create_field(:type)])
       end
       def create_field(field)
         if field.is_a?(Symbol)

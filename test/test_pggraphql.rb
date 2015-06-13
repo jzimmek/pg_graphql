@@ -158,6 +158,23 @@ module PgGraphQl
       ), token(res[:sql])
       assert_equal [], res[:params]
 
+      # ---
+
+      res = to_sql({user: {email: nil, other: nil, :"$custom" => {name: "bob"}}}) do |s|
+        s.root :user
+        s.type :user, null_pk: :array, fields: [:email, {name: :other, expr: ->(c, query){ "'#{query[:"$custom"][:name]}'" }}]
+      end
+
+      assert_equal token(<<-SQL
+        select 'user'::text as key,
+          (select to_json(coalesce(json_agg(x.*), '[]'::json))
+            from (select users1.id,
+                  users1.email as email,
+                  'bob' as other
+                from users as users1) x) as value
+      SQL
+      ), token(res[:sql])
+
     end
 
     def test_simple_igore_dollar_fields
@@ -593,7 +610,7 @@ module PgGraphQl
       res = to_sql({flow: {id: 1, data: nil}}) do |s|
         s.root :flow
         s.type :flow do |t|
-          t.fields = [{name: :data, expr: ->(c){ "to_json(#{c})" } }]
+          t.fields = [{name: :data, expr: ->(c, query){ "to_json(#{c})" } }]
         end
       end
 
@@ -608,7 +625,7 @@ module PgGraphQl
       res = to_sql({flow: {id: 1, data: nil}}) do |s|
         s.root :flow
         s.type :flow do |t|
-          t.fields = [{name: :data, as: nil, expr: ->(c){ "to_json(#{c})" } }]
+          t.fields = [{name: :data, as: nil, expr: ->(c, query){ "to_json(#{c})" } }]
         end
       end
 
